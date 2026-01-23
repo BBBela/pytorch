@@ -883,7 +883,7 @@ def instantiate_device_type_tests(
     only_for=None,
     include_lazy=False,
     allow_mps=False,
-    allow_xpu=False,
+    allow_xpu=True,
 ):
     # Removes the generic test class from its enclosing scope so its tests
     # are not discoverable.
