@@ -292,7 +292,7 @@ Tensor& addmv_out(
     const Scalar& beta,
     const Scalar& alpha,
     Tensor& out) {
-  Tensor self_v;
+  // Validate dimensions
   TORCH_CHECK(
       (mat.dim() == 2 && vec.dim() == 1 && self.dim() <= 1),
       "vector + matrix @ vector expected, got ",
@@ -301,32 +301,25 @@ Tensor& addmv_out(
       mat.dim(),
       ", ",
       vec.dim());
-  if (self.dim() == 1 && self.size(0) != 1) {
-    TORCH_CHECK(
-        (mat.size(1) == vec.size(0) && mat.size(0) == self.size(0)),
-        "size mismatch, get ",
-        self.size(0),
-        ", ",
-        mat.size(0),
-        "x",
-        mat.size(1),
-        ",",
-        vec.size(0));
-    self_v = self.view({self.size(0), 1});
-  } else {
-    TORCH_CHECK(
-        (mat.size(1) == vec.size(0)),
-        "size mismatch, get ",
-        mat.size(0),
-        "x",
-        mat.size(1),
-        ",",
-        vec.size(0));
-    self_v = self;
-  }
+  
+  // Validate sizes - match the meta function validation logic
+  TORCH_CHECK(
+      mat.size(1) == vec.size(0) && (mat.size(0) == self.numel() || self.numel() == 1),
+      "size mismatch, got input (", self.numel(), "), mat (", mat.size(0), "x", mat.size(1), "), vec (", vec.size(0), ")");
 
+  // Properly expand/reshape self to match the expected output dimensions
+  // This matches the CPU implementation logic
+  Tensor self_expanded;
+  if (self.numel() == 1) {
+    // Handle scalar or 1-element tensor - broadcast to result size
+    self_expanded = self.expand({mat.size(0)}).view({mat.size(0), 1});
+  } else {
+    // Handle 1D tensor with correct size
+    self_expanded = self.view({self.size(0), 1});
+  }
+  
   Tensor vec_v = vec.view({vec.size(0), 1});
-  at::native::xpu::addmm_out(self_v, mat, vec_v, beta, alpha, out);
+  at::native::xpu::addmm_out(self_expanded, mat, vec_v, beta, alpha, out);
   out.resize_({mat.size(0)});
   return out;
 }
