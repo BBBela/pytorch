@@ -4,6 +4,11 @@
 #include <ATen/native/mkldnn/xpu/detail/oneDNN.h>
 #include <ATen/native/xpu/Blas.h>
 #include <torch/library.h>
+//#if defined(USE_ONEMKL_XPU)
+#include <comm/Runtime.h>
+#include <oneapi/mkl/blas.hpp>
+#include <c10/xpu/XPUFunctions.h>
+//#endif
 #ifndef AT_PER_OPERATOR_HEADERS
 
 #include <ATen/Functions.h>
@@ -20,6 +25,270 @@
 
 namespace at::native {
 namespace xpu {
+
+//#if defined(USE_ONEMKL_XPU)
+// Helper functions adapted from the existing oneMKL implementation
+
+static inline bool is_column_major_f64(
+    const int64_t stride_first,
+    const int64_t stride_second,
+    const int64_t dim_first,
+    const int64_t dim_second,
+    const bool contiguous_batch,
+    const bool check_dim_second = true) {
+  return contiguous_batch && stride_first == 1 &&
+      ((dim_second == 1 && check_dim_second) ||
+       stride_second >= std::max(int64_t{1}, dim_first));
+}
+
+static inline bool is_row_major_f64(
+    const int64_t stride_first,
+    const int64_t stride_second,
+    const int64_t dim_first,
+    const int64_t dim_second,
+    const bool contiguous_batch,
+    const bool check_dim_first = true) {
+  return contiguous_batch && stride_second == 1 &&
+      ((dim_first == 1 && check_dim_first) ||
+       stride_first >= std::max(int64_t{1}, dim_second));
+}
+
+static std::pair<Tensor, bool> process_result_matrix_f64(
+    const Tensor& result,
+    IntArrayRef result_sizes) {
+  const auto result_strides = result.strides();
+  const int64_t ndim = result_strides.size();
+  const int64_t last_dim = ndim - 1;
+  const int64_t second_last_dim = ndim - 2;
+
+  const bool contiguous_batch = ndim > 2
+      ? result_strides[0] == (result_sizes[1] * result_sizes[2])
+      : true;
+
+  Tensor c = result.resolve_conj();
+
+  if (is_column_major_f64(
+          result_strides[second_last_dim],
+          result_strides[last_dim],
+          result_sizes[second_last_dim],
+          result_sizes[last_dim],
+          contiguous_batch)) {
+    return {c, false};
+  }
+
+  if (is_row_major_f64(
+          result_strides[second_last_dim],
+          result_strides[last_dim],
+          result_sizes[second_last_dim],
+          result_sizes[last_dim],
+          contiguous_batch)) {
+    return {c, true};
+  }
+
+  // Matrix is not contiguous - make it contiguous while preserving layout
+  c = c.transpose(second_last_dim, last_dim)
+          .contiguous()
+          .transpose_(second_last_dim, last_dim);
+  return {c, false};
+}
+
+static std::pair<Tensor, bool> process_matrix_f64(
+    const Tensor& m,
+    bool transpose_c,
+    int64_t first_dim,
+    int64_t second_dim) {
+  const auto m_strides = m.strides();
+  const int64_t ndim = m_strides.size();
+  const int64_t last_stride = m_strides[ndim - 1];
+  const int64_t second_last_stride = m_strides[ndim - 2];
+
+  const bool contiguous_batch =
+      ndim > 2 ? m_strides[0] == (m.sizes()[1] * m.sizes()[2]) : true;
+
+  const int64_t stride_inner = transpose_c ? last_stride : second_last_stride;
+  const int64_t stride_outer = transpose_c ? second_last_stride : last_stride;
+
+  if (is_column_major_f64(
+          stride_inner,
+          stride_outer,
+          first_dim,
+          second_dim,
+          contiguous_batch,
+          false)) {
+    return {m.resolve_conj(), false};
+  }
+
+  if (is_row_major_f64(
+          stride_inner,
+          stride_outer,
+          first_dim,
+          second_dim,
+          contiguous_batch,
+          false)) {
+    return {m, true};
+  }
+
+  // Matrix needs to be made contiguous with transposition based on transpose_c
+  return {m.clone(MemoryFormat::Contiguous), !transpose_c};
+}
+
+static inline int64_t get_ldc_f64(const bool is_transposed, const Tensor& c) {
+  int64_t ldc;
+  const int64_t ndim = c.dim();
+
+  // Handle the corner case where the last two strides are both 1
+  if (c.strides()[ndim - 2] == c.strides()[ndim - 1] &&
+      c.strides()[ndim - 1] == 1) {
+    ldc = c.sizes()[is_transposed ? ndim - 1 : ndim - 2];
+  } else {
+    ldc = c.strides()[is_transposed ? ndim - 2 : ndim - 1];
+  }
+  return ldc;
+}
+
+static Tensor prepare_result_tensor_f64(
+    const Tensor& self,
+    const Tensor& mat1,
+    const Tensor& mat2) {
+  Tensor result = self.contiguous().resolve_conj().clone().detach();
+
+  std::vector<int64_t> expected_output_size{mat1.size(0), mat2.size(1)};
+
+  if (result.sizes() != expected_output_size) {
+    result = broadcast_to(result, expected_output_size).contiguous();
+  }
+
+  return result;
+}
+
+static void copy_result_to_output_f64(Tensor& output, const Tensor& result) {
+  if (!output.is_same(result)) {
+    if (output.sizes() == result.sizes()) {
+      output.copy_(result);
+    } else {
+      output.copy_(result.view(output.sizes()));
+    }
+  }
+}
+
+// oneMKL implementation for float64 addmm operation
+Tensor& addmm_f64_out_xpu_mkl(
+    const Tensor& self,
+    const Tensor& mat1,
+    const Tensor& mat2,
+    const Scalar& beta,
+    const Scalar& alpha,
+    Tensor& out) {
+  
+  // Prepare result tensor following the existing pattern
+  Tensor result = prepare_result_tensor_f64(self, mat1, mat2);
+
+  const int64_t ndim = mat1.dim();
+  const auto result_sizes = result.sizes();
+  
+  auto [c, transpose_c] = process_result_matrix_f64(result, result_sizes);
+  
+  // For cases when C matrix is transposed we need to switch m1 and m2 to use
+  // column_major implementation.
+  const Tensor& m1 = transpose_c ? mat2 : mat1;
+  const Tensor& m2 = transpose_c ? mat1 : mat2;
+
+  const int64_t m = result_sizes[transpose_c ? ndim - 1 : ndim - 2];
+  const int64_t n = result_sizes[transpose_c ? ndim - 2 : ndim - 1];
+  const int64_t k = mat1.sizes()[ndim - 1];
+
+  auto [a, transpose_a] = process_matrix_f64(m1, transpose_c, m, k);
+  auto [b, transpose_b] = process_matrix_f64(m2, transpose_c, k, n);
+
+  const int64_t lda =
+      a.strides()[(transpose_a == transpose_c) ? ndim - 1 : ndim - 2];
+  const int64_t ldb =
+      b.strides()[(transpose_b == transpose_c) ? ndim - 1 : ndim - 2];
+  const int64_t ldc = get_ldc_f64(transpose_c, c);
+
+  const double* A = a.data_ptr<double>();
+  const double* B = b.data_ptr<double>();
+  double* C = c.data_ptr<double>();
+  auto queue = c10::xpu::getCurrentXPUStream().queue();
+
+  const oneapi::mkl::transpose transA = transpose_a ? oneapi::mkl::transpose::T : oneapi::mkl::transpose::N;
+  const oneapi::mkl::transpose transB = transpose_b ? oneapi::mkl::transpose::T : oneapi::mkl::transpose::N;
+
+  oneapi::mkl::blas::column_major::gemm(
+      queue, transA, transB, m, n, k, 
+      alpha.to<double>(), A, lda, B, ldb, 
+      beta.to<double>(), C, ldc);
+
+  copy_result_to_output_f64(out, c);
+  
+  return out;
+}
+
+// oneMKL implementation for float64 baddbmm operation (batched)
+Tensor& baddbmm_f64_out_xpu_mkl(
+    const Tensor& input,
+    const Tensor& batch1,
+    const Tensor& batch2,
+    const Scalar& beta,
+    const Scalar& alpha,
+    Tensor& out) {
+  
+  const int64_t batch_size = batch1.size(0);
+  const int64_t m = batch1.size(1);
+  const int64_t k = batch1.size(2);
+  const int64_t n = batch2.size(2);
+  
+  // Prepare result tensor
+  Tensor result = input.contiguous().resolve_conj().clone().detach();
+  
+  std::vector<int64_t> expected_output_size{batch_size, m, n};
+  if (result.sizes() != expected_output_size) {
+    result = broadcast_to(result, expected_output_size).contiguous();
+  }
+  
+  auto queue = c10::xpu::getCurrentXPUStream().queue();
+  
+  // Process each batch
+  for (int64_t b = 0; b < batch_size; ++b) {
+    Tensor batch1_slice = batch1.select(0, b);
+    Tensor batch2_slice = batch2.select(0, b);
+    Tensor result_slice = result.select(0, b);
+    
+    const auto result_sizes = result_slice.sizes();
+    auto [c, transpose_c] = process_result_matrix_f64(result_slice, result_sizes);
+    
+    // For cases when C matrix is transposed we need to switch m1 and m2
+    const Tensor& m1 = transpose_c ? batch2_slice : batch1_slice;
+    const Tensor& m2 = transpose_c ? batch1_slice : batch2_slice;
+    
+    const int64_t m_dim = transpose_c ? n : m;
+    const int64_t n_dim = transpose_c ? m : n;
+    
+    auto [a, transpose_a] = process_matrix_f64(m1, transpose_c, m_dim, k);
+    auto [b_tensor, transpose_b] = process_matrix_f64(m2, transpose_c, k, n_dim);
+    
+    const int64_t lda = a.strides()[(transpose_a == transpose_c) ? 1 : 0];
+    const int64_t ldb = b_tensor.strides()[(transpose_b == transpose_c) ? 1 : 0];
+    const int64_t ldc = get_ldc_f64(transpose_c, c);
+    
+    const double* A = a.data_ptr<double>();
+    const double* B = b_tensor.data_ptr<double>();
+    double* C = c.data_ptr<double>();
+    
+    const oneapi::mkl::transpose transA = transpose_a ? oneapi::mkl::transpose::T : oneapi::mkl::transpose::N;
+    const oneapi::mkl::transpose transB = transpose_b ? oneapi::mkl::transpose::T : oneapi::mkl::transpose::N;
+    
+    oneapi::mkl::blas::column_major::gemm(
+        queue, transA, transB, m_dim, n_dim, k, 
+        alpha.to<double>(), A, lda, B, ldb, 
+        beta.to<double>(), C, ldc);
+  }
+  
+  copy_result_to_output_f64(out, result);
+  
+  return out;
+}
+//#endif // USE_ONEMKL_XPU
 
 // result = beta * self + alpha * (mat1 * mat2)
 Tensor& addmm_out(
@@ -86,31 +355,39 @@ Tensor& addmm_out(
       self.sizes());
 
   // Different float64 handling.
+
+//#if defined(USE_ONEMKL_XPU)
   if (mat1.scalar_type() == at::kDouble) {
-    bool is_inplace = self.is_same(result);
-    bool beta_not_zero = beta.to<double>() != 0.0;
-    Tensor self_copy;
-
-    if (is_inplace && beta_not_zero) {
-      self_copy = self.clone();
-    }
-
-    onednn::matmul(result, mat1, mat2, Tensor(), true, onednn::Attr());
-
-    if (alpha.to<double>() != 1.0) {
-      result.mul_(alpha);
-    }
-
-    if (beta_not_zero) {
-      if (is_inplace) {
-        result.add_(self_copy, beta);
-      } else {
-        result.add_(self, beta);
-      }
-    }
-
-    return result;
+    // Use oneMKL GEMM for float64 which supports alpha/beta directly
+    return at::native::xpu::addmm_f64_out_xpu_mkl(self, mat1, mat2, beta, alpha, result);
   }
+//#endif // USE_ONEMKL_XPU
+//     // Fallback to current oneDNN approach
+//     bool is_inplace = self.is_same(result);
+//     bool beta_not_zero = beta.to<double>() != 0.0;
+//     Tensor self_copy;
+
+//     if (is_inplace && beta_not_zero) {
+//       self_copy = self.clone();
+//     }
+
+//     onednn::matmul(result, mat1, mat2, Tensor(), true, onednn::Attr());
+
+//     if (alpha.to<double>() != 1.0) {
+//       result.mul_(alpha);
+//     }
+
+//     if (beta_not_zero) {
+//       if (is_inplace) {
+//         result.add_(self_copy, beta);
+//       } else {
+//         result.add_(self, beta);
+//       }
+//     }
+
+//     return result;
+// #endif // USE_ONEMKL_XPU
+//   }
 
   // general case
   Tensor bias = Tensor();
@@ -252,29 +529,8 @@ Tensor& baddbmm_out(
 
   // Different float64 handling.
   if (batch1.scalar_type() == at::kDouble || batch2.scalar_type() == at::kDouble) {
-    bool is_inplace = input.is_same(result);
-    bool beta_not_zero = beta.to<double>() != 0.0;
-    Tensor input_copy;
-
-    if (is_inplace && beta_not_zero) {
-      input_copy = input.clone();
-    }
-
-    onednn::matmul(result, batch1, batch2, Tensor(), true, onednn::Attr());
-
-    if (alpha.to<double>() != 1.0) {
-      result.mul_(alpha);
-    }
-
-    if (beta_not_zero) {
-      if (is_inplace) {
-        result.add_(input_copy, beta);
-      } else {
-        result.add_(input, beta);
-      }
-    }
-
-    return result;
+    // Use oneMKL BLAS for float64 which supports alpha/beta directly
+    return at::native::xpu::baddbmm_f64_out_xpu_mkl(input, batch1, batch2, beta, alpha, result);
   }
 
   // general case
@@ -381,17 +637,8 @@ Tensor& addmv_out(
 
   Tensor vec_v = vec.view({vec.size(0), 1});
 
-  bool is_float64 = mat.scalar_type() == at::kDouble ||
-                    vec.scalar_type() == at::kDouble;
-  bool is_inplace = self.is_same(out);
-  bool beta_non_zero = beta.to<double>() != 0.0;
-  if (is_float64 && is_inplace && beta_non_zero) {
-    Tensor self_v_copy;
-    self_v_copy = self_v.clone();
-    at::native::xpu::addmm_out(self_v_copy, mat, vec_v, beta, alpha, out);
-  } else {
-    at::native::xpu::addmm_out(self_v, mat, vec_v, beta, alpha, out);
-  }
+  // Use addmm_out which now handles float64 with proper oneMKL alpha/beta scaling
+  at::native::xpu::addmm_out(self_v, mat, vec_v, beta, alpha, out);
 
   out.resize_({mat.size(0)});
   return out;
