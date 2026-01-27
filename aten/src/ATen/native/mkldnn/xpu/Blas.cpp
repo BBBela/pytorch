@@ -26,6 +26,14 @@
 namespace at::native {
 namespace xpu {
 
+static int count_addmm_out = 0;
+static int count_addmv_out = 0;
+static int count_baddbmm_out = 0;
+
+void print_logs(){
+  // std::cout << "addmm: " << count_addmm_out << ", addmv: " << count_addmv_out << ", baddbmm: " << count_baddbmm_out << std::endl;
+}
+
 //#if defined(USE_ONEMKL_XPU)
 // Helper functions adapted from the existing oneMKL implementation
 
@@ -288,6 +296,16 @@ Tensor& baddbmm_f64_out_xpu_mkl(
   
   return out;
 }
+
+// Forward declaration for optimized addmv implementation
+Tensor& addmv_f64_out_xpu_mkl(
+    const Tensor& self,
+    const Tensor& mat,
+    const Tensor& vec,
+    const Scalar& beta,
+    const Scalar& alpha,
+    Tensor& out);
+
 //#endif // USE_ONEMKL_XPU
 
 // result = beta * self + alpha * (mat1 * mat2)
@@ -355,6 +373,17 @@ Tensor& addmm_out(
       self.sizes());
 
   // Different float64 handling.
+
+  print_logs();
+  count_addmm_out++;
+  
+  // Debug: Print stack info to understand call patterns
+  if (count_addmm_out == 18176) {
+    std::cout << "ADDMM call #" << count_addmm_out << " - dtype: " 
+              << (mat1.scalar_type() == at::kDouble ? "float64" : "other") 
+              << ", sizes: [" << mat1.size(0) << "x" << mat1.size(1) << "] @ [" 
+              << mat2.size(0) << "x" << mat2.size(1) << "]" << std::endl;
+  }
 
 //#if defined(USE_ONEMKL_XPU)
   if (mat1.scalar_type() == at::kDouble) {
@@ -527,6 +556,9 @@ Tensor& baddbmm_out(
     return result;
   }
 
+  print_logs();
+  count_baddbmm_out++;
+
   // Different float64 handling.
   if (batch1.scalar_type() == at::kDouble || batch2.scalar_type() == at::kDouble) {
     // Use oneMKL BLAS for float64 which supports alpha/beta directly
@@ -602,7 +634,8 @@ Tensor& addmv_out(
     const Scalar& beta,
     const Scalar& alpha,
     Tensor& out) {
-  Tensor self_v;
+  count_addmv_out++;
+  
   TORCH_CHECK(
       (mat.dim() == 2 && vec.dim() == 1 && self.dim() <= 1),
       "vector + matrix @ vector expected, got ",
@@ -611,6 +644,8 @@ Tensor& addmv_out(
       mat.dim(),
       ", ",
       vec.dim());
+
+  // Size validation
   if (self.dim() == 1 && self.size(0) != 1) {
     TORCH_CHECK(
         (mat.size(1) == vec.size(0) && mat.size(0) == self.size(0)),
@@ -622,7 +657,6 @@ Tensor& addmv_out(
         mat.size(1),
         ",",
         vec.size(0));
-    self_v = self.view({self.size(0), 1});
   } else {
     TORCH_CHECK(
         (mat.size(1) == vec.size(0)),
@@ -632,6 +666,20 @@ Tensor& addmv_out(
         mat.size(1),
         ",",
         vec.size(0));
+  }
+  
+  // For float64, use optimized oneMKL gemv implementation
+  if (out.scalar_type() == at::kDouble || 
+      mat.scalar_type() == at::kDouble || 
+      vec.scalar_type() == at::kDouble) {
+    return addmv_f64_out_xpu_mkl(self, mat, vec, beta, alpha, out);
+  }
+  
+  // For other types, fall back to addmm-based implementation
+  Tensor self_v;
+  if (self.dim() == 1 && self.size(0) != 1) {
+    self_v = self.view({self.size(0), 1});
+  } else {
     self_v = self;
   }
 
@@ -641,6 +689,82 @@ Tensor& addmv_out(
   at::native::xpu::addmm_out(self_v, mat, vec_v, beta, alpha, out);
 
   out.resize_({mat.size(0)});
+  return out;
+}
+
+// Optimized oneMKL implementation for float64 addmv operation using gemv
+Tensor& addmv_f64_out_xpu_mkl(
+    const Tensor& self,
+    const Tensor& mat,
+    const Tensor& vec,
+    const Scalar& beta,
+    const Scalar& alpha,
+    Tensor& out) {
+  
+  const int64_t m = mat.size(0);
+  const int64_t n = mat.size(1);
+  
+  // Prepare result vector - ensure it's the right size and type
+  Tensor result;
+  if (self.dim() == 0 || (self.dim() == 1 && self.size(0) == 1)) {
+    // Scalar or single element - create appropriately sized result vector
+    result = at::zeros({m}, at::device(self.device()).dtype(at::kDouble));
+    if (self.dim() == 1 && self.size(0) == 1) {
+      result.fill_(self.item().to<double>());
+    } else if (self.dim() == 0) {
+      result.fill_(self.item().to<double>());
+    }
+  } else {
+    // Vector input - ensure proper type and contiguity
+    result = self.scalar_type() == at::kDouble ? 
+             self.contiguous().clone().detach() : 
+             self.to(at::kDouble).contiguous().clone().detach();
+  }
+  
+  // Process input matrix - ensure float64 and contiguous
+  Tensor a = mat.scalar_type() == at::kDouble ? 
+             mat.contiguous() : 
+             mat.to(at::kDouble).contiguous();
+  
+  // Process input vector - ensure float64 and contiguous
+  Tensor x = vec.scalar_type() == at::kDouble ? 
+             vec.contiguous() : 
+             vec.to(at::kDouble).contiguous();
+  
+  // Set up oneMKL gemv parameters
+  auto queue = c10::xpu::getCurrentXPUStream().queue();
+  
+  // For column-major gemv: A is m x n, lda should be >= m
+  // We assume PyTorch tensors are row-major, so we need to transpose
+  const oneapi::mkl::transpose trans = oneapi::mkl::transpose::T;
+  const int64_t gemv_m = n;  // After transpose, rows become cols
+  const int64_t gemv_n = m;  // After transpose, cols become rows
+  const int64_t lda = std::max(int64_t{1}, n);  // Leading dim of original matrix
+  const int64_t incx = x.stride(0);
+  const int64_t incy = result.stride(0);
+  
+  const double alpha_val = alpha.to<double>();
+  const double beta_val = beta.to<double>();
+  
+  const double* A = a.data_ptr<double>();
+  const double* X = x.data_ptr<double>();
+  double* Y = result.data_ptr<double>();
+  
+  // Call oneMKL gemv: y = alpha * A^T * x + beta * y
+  // Where A^T transforms row-major to column-major semantics
+  oneapi::mkl::blas::column_major::gemv(
+      queue, trans, gemv_m, gemv_n, 
+      alpha_val, A, lda, 
+      X, incx, 
+      beta_val, Y, incy);
+  
+  // Copy result back to output tensor
+  if (out.scalar_type() == at::kDouble) {
+    out.copy_(result);
+  } else {
+    out.copy_(result.to(out.scalar_type()));
+  }
+  
   return out;
 }
 
