@@ -1,4 +1,6 @@
 #include <vector>
+#include <sstream>
+#include <cxxabi.h>  // For stack trace demangling
 
 #include <ATen/core/ATen_fwd.h>
 #include <ATen/core/interned_strings.h>
@@ -20,6 +22,37 @@ using namespace at::native::onednn;
 
 namespace at::native::xpu {
 namespace impl {
+
+// Helper function to get simplified stack trace
+std::string get_caller_info() {
+  // Simple way to detect if we're in functorch path
+  // This is a heuristic - in practice you might need more sophisticated detection
+  return "[CALLER_DETECTION_NEEDED]";
+}
+
+// Call tracking for precision analysis
+static std::atomic<int> call_counter{0};
+static thread_local std::string current_path = "unknown";
+
+void set_gradient_path(const std::string& path) {
+  current_path = path;
+}
+
+std::string get_gradient_path() {
+  // DISABLED: Environment variable reads can affect GPU/threading timing
+  // const char* path = std::getenv("XPU_GRADIENT_PATH");
+  // return path ? std::string(path) : "unknown";
+  return "disabled_for_precision_test";
+}
+
+// Helper to format tensor properties for debugging
+std::string describe_tensor(const Tensor& t, const std::string& name) {
+  std::ostringstream oss;
+  oss << name << "[" << t.sizes() << ", strides=" << t.strides() 
+      << ", fmt=" << (t.is_contiguous() ? "contiguous" : "non-contiguous")
+      << ", dtype=" << t.scalar_type() << "]";
+  return oss.str();
+}
 
 struct ConvParams {
   std::vector<int64_t> stride;
@@ -655,10 +688,37 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
             dilation_,
             groups_);
       } else {
+        // PRECISION DIAGNOSTICS: Log detailed info about the convolution backward call
+        static bool enable_precision_debug = false; // DISABLED: std::getenv("XPU_CONV_DEBUG") != nullptr;
+        
+        // Track call patterns to understand accumulation differences
+        int call_id = ++call_counter;
+        
+        if (enable_precision_debug) {
+          std::cout << "\n=== XPU CONV BACKWARD DIAGNOSTICS (Call #" << call_id << ") ===\n";
+          std::cout << "Gradient Path: " << get_gradient_path() << "\n";
+          std::cout << "Tensors: " << describe_tensor(input_, "input") << "\n";
+          std::cout << "         " << describe_tensor(grad_output_, "grad_out") << "\n";
+          std::cout << "         " << describe_tensor(weight_, "weight") << "\n";
+          std::cout << "Memory format suggested: " << (is_channels_last_suggested ? "channels_last" : "contiguous") << "\n";
+          std::cout << "Weight sizes: " << weight_.sizes() << "\n";
+          std::cout << "Padding: " << padding_ << ", Stride: " << stride_ << "\n";
+          std::cout << "Groups: " << groups_ << ", Dilation: " << dilation_ << "\n";
+          // REMOVED: tensor operations that affect computation graph
+          // auto input_sum = input_.sum().item<double>();
+          // auto grad_out_sum = grad_output_.sum().item<double>();
+          // std::cout << "Input sum: " << input_sum << ", Grad output sum: " << grad_out_sum << "\n";
+          std::cout << "Output masks: [" << output_mask[0] << "," << output_mask[1] << "," << output_mask[2] << "]\n";
+          std::cout << "======================================\n";
+        }
+        
         // Use double precision for large tensors to improve oneDNN accuracy
-        bool try_double_precision = (input_.numel() > 1000 || weight_.numel() > 50);
+        bool try_double_precision = false;  // DISABLED FOR TESTING - should show precision differences
         
         if (try_double_precision && grad_output_.scalar_type() == ScalarType::Float) {
+          if (enable_precision_debug) {
+            std::cout << "[PRECISION_FIX] Using double precision for large tensor convolution\n";
+          }
           // Convert to double precision
           auto grad_output_double = grad_output_.to(ScalarType::Double);
           auto input_double = input_.to(ScalarType::Double);
@@ -683,8 +743,16 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
           if (grad_bias.defined() && grad_bias_double.defined()) {
             grad_bias.copy_(grad_bias_double.to(grad_bias.scalar_type()));
           }
+          
+          if (enable_precision_debug) {
+            auto final_sum = grad_weight.sum().item<double>();
+            std::cout << "[PRECISION_FIX] Final weight grad sum: " << final_sum << "\n";
+          }
         } else {
           // Standard float precision path
+          if (enable_precision_debug) {
+            std::cout << "[STANDARD_PATH] Using standard float32 precision\n";
+          }
           onednn::convolution_backward_weights(
               grad_weight,
               grad_bias,
@@ -696,6 +764,11 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
               stride_,
               dilation_,
               groups_);
+          
+          if (enable_precision_debug) {
+            auto final_sum = grad_weight.sum().item<double>();
+            std::cout << "[STANDARD_PATH] Final weight grad sum: " << final_sum << "\n";
+          }
         }
       }
     }
@@ -710,6 +783,33 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
     if (output_mask[1])
       grad_weight = view3d(grad_weight);
   }
+  
+  // Final debug output for all gradients
+  static bool enable_precision_debug = false; // DISABLED: std::getenv("XPU_CONV_DEBUG") != nullptr;
+  if (enable_precision_debug) {
+    int call_id = call_counter.load();
+    std::cout << "=== FINAL GRADIENT RESULTS (Call #" << call_id << ") ===\n";
+    std::cout << "Path: " << get_gradient_path() << "\n";
+    if (output_mask[0] && grad_input.defined()) {
+      // REMOVED: tensor operations that affect computation
+      // auto input_grad_sum = grad_input.sum().item<double>();
+      // auto input_grad_norm = grad_input.norm().item<double>();
+      std::cout << "Input grad computed: " << grad_input.sizes() << "\n";
+    }
+    if (output_mask[1] && grad_weight.defined()) {
+      // REMOVED: tensor operations that affect computation
+      // auto weight_grad_sum = grad_weight.sum().item<double>();
+      // auto weight_grad_norm = grad_weight.norm().item<double>();
+      std::cout << "Weight grad computed: " << grad_weight.sizes() << "\n";
+    }
+    if (output_mask[2] && grad_bias.defined()) {
+      // REMOVED: tensor operations that affect computation
+      // auto bias_grad_sum = grad_bias.sum().item<double>();
+      std::cout << "Bias grad computed: " << grad_bias.sizes() << "\n";
+    }
+    std::cout << "===================================\n";
+  }
+  
   return std::tuple<Tensor, Tensor, Tensor>{grad_input, grad_weight, grad_bias};
 }
 

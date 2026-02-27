@@ -156,10 +156,10 @@ sycl::event convolution(
   args.insert({DNNL_ARG_DST, dst_m});
 
   size_t scratchpad_size = conv_fwd_pd.scratchpad_desc().get_size();
-  at::Tensor scratchpad_tensor = at::empty(
+  // INITIALIZE SCRATCHPAD to prevent non-determinism from uninitialized memory
+  at::Tensor scratchpad_tensor = at::zeros(
       {static_cast<int64_t>(scratchpad_size)},
-      src.options().dtype(at::kByte),
-      std::nullopt);
+      src.options().dtype(at::kByte));
   auto scratchpad_m = make_onednn_memory(
       conv_fwd_pd.scratchpad_desc(), engine, scratchpad_tensor.data_ptr());
   args.insert({DNNL_ARG_SCRATCHPAD, scratchpad_m});
@@ -204,11 +204,10 @@ sycl::event convolution_backward_weights(
   dnnl::memory::dims _dilation = compatible_dilation(dilation);
   dnnl::primitive_attr pattr;
 
+// FORCE DETERMINISTIC MODE for XPU to fix non-deterministic weight gradients
 #if ONEDNN_SUPPORT_DETERMINISTIC
-  if (at::globalContext().deterministicAlgorithms() ||
-      at::globalContext().deterministicMkldnn()) {
-    pattr.set_deterministic(true);
-  }
+  // Always enable deterministic mode for XPU to ensure reproducible results
+  pattr.set_deterministic(true);
 #endif
 
   at::native::onednn::apply_tf32_if_allowed(pattr);
@@ -263,10 +262,10 @@ sycl::event convolution_backward_weights(
   }
 
   size_t scratchpad_size = conv_bwd_w_pd.scratchpad_desc().get_size();
-  at::Tensor scratchpad_tensor = at::empty(
+  // INITIALIZE SCRATCHPAD to prevent non-determinism from uninitialized memory
+  at::Tensor scratchpad_tensor = at::zeros(
       {static_cast<int64_t>(scratchpad_size)},
-      src.options().dtype(at::kByte),
-      std::nullopt);
+      src.options().dtype(at::kByte));
   auto scratchpad_m = make_onednn_memory(
       conv_bwd_w_pd.scratchpad_desc(), engine, scratchpad_tensor.data_ptr());
   args.insert({DNNL_ARG_SCRATCHPAD, scratchpad_m});
@@ -307,12 +306,12 @@ sycl::event convolution_backward_data(
   // create fwd primitive desc hint
   dnnl::primitive_attr pattr;
 
+// FORCE DETERMINISTIC MODE for XPU to fix non-deterministic gradients
 #if ONEDNN_SUPPORT_DETERMINISTIC
-  if (at::globalContext().deterministicAlgorithms() ||
-      at::globalContext().deterministicMkldnn()) {
-    pattr.set_deterministic(true);
-  }
+  // Always enable deterministic mode for XPU to ensure reproducible results
+  pattr.set_deterministic(true);
 #endif
+
 
   pattr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
   dnnl::memory::dims _stride = stride.vec();
@@ -361,10 +360,10 @@ sycl::event convolution_backward_data(
   // insert args
   std::unordered_map<int, dnnl::memory> args;
   size_t scratchpad_size = conv_backward_data_pd.scratchpad_desc().get_size();
-  at::Tensor scratchpad_tensor = at::empty(
+  // INITIALIZE SCRATCHPAD to prevent non-determinism from uninitialized memory
+  at::Tensor scratchpad_tensor = at::zeros(
       {static_cast<int64_t>(scratchpad_size)},
-      diff_dst.options().dtype(at::kByte),
-      std::nullopt);
+      diff_dst.options().dtype(at::kByte));
   auto scratchpad_memory = make_onednn_memory(
       conv_backward_data_pd.scratchpad_desc(),
       engine,
