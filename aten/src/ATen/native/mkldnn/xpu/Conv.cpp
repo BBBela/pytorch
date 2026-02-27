@@ -1,4 +1,5 @@
 #include <vector>
+#include <iomanip>  // For std::setprecision in debug output
 
 #include <ATen/core/ATen_fwd.h>
 #include <ATen/core/interned_strings.h>
@@ -591,9 +592,45 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
   auto mfmt = is_channels_last_suggested
       ? get_cl_tag_by_ndim(input_.ndimension())
       : at::MemoryFormat::Contiguous;
-  grad_output_ = grad_output_.contiguous(mfmt);
-  weight_ = weight_.contiguous(mfmt);
-  input_ = input_.contiguous(mfmt);
+      
+  // POTENTIAL FIX: Force contiguous format for precision consistency
+  // Based on testing showing that forced contiguous reduces precision differences
+  auto forced_mfmt = at::MemoryFormat::Contiguous;  // TEST: Always use contiguous
+  
+  // DEBUG XPU PRECISION: Log tensor properties before contiguous()
+  // #ifdef XPU_DEBUG_PRECISION  // Always enable for testing
+  auto input_numel = input_.numel();
+  auto weight_numel = weight_.numel();
+  auto grad_output_numel = grad_output_.numel();
+  auto total_elements = input_numel + weight_numel + grad_output_numel;
+  
+  // Log memory addresses before contiguous
+  void* pre_input_ptr = input_.data_ptr();
+  void* pre_weight_ptr = weight_.data_ptr(); 
+  void* pre_grad_output_ptr = grad_output_.data_ptr();
+  
+  std::cout << "[XPU_DEBUG] PRE-CONTIGUOUS: total_elements=" << total_elements 
+            << ", input_numel=" << input_numel << ", weight_numel=" << weight_numel
+            << ", layout=" << (forced_mfmt == at::MemoryFormat::Contiguous ? "NCHW" : "NHWC")
+            << ", input_ptr=" << pre_input_ptr << ", weight_ptr=" << pre_weight_ptr << std::endl;
+  // #endif  // Always enable for testing
+  grad_output_ = grad_output_.contiguous(forced_mfmt);  // TEST: Use forced format
+  weight_ = weight_.contiguous(forced_mfmt);          // TEST: Use forced format  
+  input_ = input_.contiguous(forced_mfmt);            // TEST: Use forced format
+  
+  // DEBUG XPU PRECISION: Check if contiguous() created copies
+  // #ifdef XPU_DEBUG_PRECISION  // Always enable for testing
+  void* post_input_ptr = input_.data_ptr();
+  void* post_weight_ptr = weight_.data_ptr();
+  void* post_grad_output_ptr = grad_output_.data_ptr();
+  
+  bool input_copied = (pre_input_ptr != post_input_ptr);
+  bool weight_copied = (pre_weight_ptr != post_weight_ptr);
+  bool grad_output_copied = (pre_grad_output_ptr != post_grad_output_ptr);
+  
+  std::cout << "[XPU_DEBUG] POST-CONTIGUOUS: input_copied=" << input_copied 
+            << ", weight_copied=" << weight_copied << ", grad_output_copied=" << grad_output_copied << std::endl;
+  // #endif  // Always enable for testing
 
   auto opt = grad_output_.options();
   Tensor grad_input;
@@ -604,7 +641,7 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
   }
 
   if (output_mask[0]) {
-    grad_input = at::empty(input_.sizes(), opt, mfmt);
+    grad_input = at::empty(input_.sizes(), opt, forced_mfmt);  // TEST: Use forced format
     TensorArg grad_output_t{grad_output, "grad_output", 1},
         input_t{input, "input", 2};
     checkAllSameType(c, {grad_output_t, input_t});
@@ -636,7 +673,7 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
     }
   }
   if (output_mask[1] || output_mask[2]) {
-    grad_weight = at::empty(weight_.sizes(), opt, mfmt);
+    grad_weight = at::empty(weight_.sizes(), opt, forced_mfmt);  // TEST: Use forced format
     TensorArg grad_output_t{grad_output, "grad_output", 1},
         weight_t{weight, "weight", 2};
     checkAllSameType(c, {grad_output_t, weight_t});
@@ -654,17 +691,75 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
             dilation_,
             groups_);
       } else {
-        onednn::convolution_backward_weights(
-            grad_weight,
-            grad_bias,
-            grad_output_,
-            input_,
-            weight_.sizes(),
-            padding_,
-            padding_,
-            stride_,
-            dilation_,
-            groups_);
+        // DEBUG XPU PRECISION: Log checksums before oneDNN weight gradient call
+        // #ifdef XPU_DEBUG_PRECISION  // Always enable for testing
+        auto pre_grad_output_sum = grad_output_.sum().item<double>();
+        auto pre_input_sum = input_.sum().item<double>();
+        auto input_norm = input_.norm().item<double>();
+        auto grad_output_norm = grad_output_.norm().item<double>();
+        
+        std::cout << "[XPU_DEBUG] PRE-oneDNN: input_sum=" << std::fixed << std::setprecision(12) << pre_input_sum
+                  << ", grad_output_sum=" << pre_grad_output_sum
+                  << ", input_norm=" << input_norm << ", grad_output_norm=" << grad_output_norm << std::endl;
+        // #endif  // Always enable for testing
+        
+        // EXPERIMENTAL: Try double precision to improve oneDNN accuracy
+        bool try_double_precision = (input_.numel() > 1000 || weight_.numel() > 50);  // Large tensors only
+        
+        if (try_double_precision && grad_output_.scalar_type() == ScalarType::Float) {
+          std::cout << "[XPU_DEBUG] Trying DOUBLE PRECISION oneDNN for better accuracy" << std::endl;
+          
+          // Convert to double precision
+          auto grad_output_double = grad_output_.to(ScalarType::Double);
+          auto input_double = input_.to(ScalarType::Double);
+          auto grad_weight_double = at::empty(weight_.sizes(), grad_output_double.options(), forced_mfmt);
+          auto grad_bias_double = grad_bias.defined() ? at::empty({grad_output_double.size(1)}, grad_output_double.options()) : grad_bias;
+          
+          // Call oneDNN with double precision
+          onednn::convolution_backward_weights(
+              grad_weight_double,
+              grad_bias_double,
+              grad_output_double,
+              input_double,
+              weight_.sizes(),
+              padding_,
+              padding_,
+              stride_,
+              dilation_,
+              groups_);
+          
+          // Convert back to original precision
+          grad_weight.copy_(grad_weight_double.to(grad_weight.scalar_type()));
+          if (grad_bias.defined() && grad_bias_double.defined()) {
+            grad_bias.copy_(grad_bias_double.to(grad_bias.scalar_type()));
+          }
+        } else {
+          // Original float precision path
+          onednn::convolution_backward_weights(
+              grad_weight,
+              grad_bias,
+              grad_output_,
+              input_,
+              weight_.sizes(),
+              padding_,
+              padding_,
+              stride_,
+              dilation_,
+              groups_);
+        }  // End of double precision conditional
+        
+        // DEBUG XPU PRECISION: Log weight gradient checksums after oneDNN
+        // #ifdef XPU_DEBUG_PRECISION  // Always enable for testing
+        auto weight_grad_sum = grad_weight.sum().item<double>();
+        auto weight_grad_norm = grad_weight.norm().item<double>();
+        auto weight_grad_max = grad_weight.abs().max().item<double>();
+        auto weight_grad_min = grad_weight.abs().min().item<double>();
+        
+        std::cout << "[XPU_DEBUG] POST-oneDNN: weight_grad_sum=" << std::fixed << std::setprecision(12) << weight_grad_sum
+                  << ", weight_grad_norm=" << weight_grad_norm 
+                  << ", weight_grad_max=" << weight_grad_max
+                  << ", weight_grad_min=" << weight_grad_min << std::endl;
+        // #endif  // Always enable for testing
       }
     }
     if (!output_mask[1]) {
