@@ -156,8 +156,7 @@ sycl::event convolution(
   args.insert({DNNL_ARG_DST, dst_m});
 
   size_t scratchpad_size = conv_fwd_pd.scratchpad_desc().get_size();
-  // INITIALIZE SCRATCHPAD to prevent non-determinism from uninitialized memory
-  at::Tensor scratchpad_tensor = at::zeros(
+  at::Tensor scratchpad_tensor = at::empty(
       {static_cast<int64_t>(scratchpad_size)},
       src.options().dtype(at::kByte));
   auto scratchpad_m = make_onednn_memory(
@@ -262,8 +261,7 @@ sycl::event convolution_backward_weights(
   }
 
   size_t scratchpad_size = conv_bwd_w_pd.scratchpad_desc().get_size();
-  // INITIALIZE SCRATCHPAD to prevent non-determinism from uninitialized memory
-  at::Tensor scratchpad_tensor = at::zeros(
+  at::Tensor scratchpad_tensor = at::empty(
       {static_cast<int64_t>(scratchpad_size)},
       src.options().dtype(at::kByte));
   auto scratchpad_m = make_onednn_memory(
@@ -360,8 +358,7 @@ sycl::event convolution_backward_data(
   // insert args
   std::unordered_map<int, dnnl::memory> args;
   size_t scratchpad_size = conv_backward_data_pd.scratchpad_desc().get_size();
-  // INITIALIZE SCRATCHPAD to prevent non-determinism from uninitialized memory
-  at::Tensor scratchpad_tensor = at::zeros(
+  at::Tensor scratchpad_tensor = at::empty(
       {static_cast<int64_t>(scratchpad_size)},
       diff_dst.options().dtype(at::kByte));
   auto scratchpad_memory = make_onednn_memory(
