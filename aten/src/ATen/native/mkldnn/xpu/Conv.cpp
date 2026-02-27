@@ -591,7 +591,6 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
   auto mfmt = is_channels_last_suggested
       ? get_cl_tag_by_ndim(input_.ndimension())
       : at::MemoryFormat::Contiguous;
-  
   grad_output_ = grad_output_.contiguous(mfmt);
   weight_ = weight_.contiguous(mfmt);
   input_ = input_.contiguous(mfmt);
@@ -655,48 +654,17 @@ std::tuple<Tensor, Tensor, Tensor> convolution_backward_overrideable(
             dilation_,
             groups_);
       } else {
-        // Use double precision for large tensors to improve oneDNN accuracy
-        bool try_double_precision = (input_.numel() > 1000 || weight_.numel() > 50);
-        
-        if (try_double_precision && grad_output_.scalar_type() == ScalarType::Float) {
-          // Convert to double precision
-          auto grad_output_double = grad_output_.to(ScalarType::Double);
-          auto input_double = input_.to(ScalarType::Double);
-          auto grad_weight_double = at::empty(weight_.sizes(), grad_output_double.options(), mfmt);
-          auto grad_bias_double = grad_bias.defined() ? at::empty({grad_output_double.size(1)}, grad_output_double.options()) : grad_bias;
-          
-          // Call oneDNN with double precision
-          onednn::convolution_backward_weights(
-              grad_weight_double,
-              grad_bias_double,
-              grad_output_double,
-              input_double,
-              weight_.sizes(),
-              padding_,
-              padding_,
-              stride_,
-              dilation_,
-              groups_);
-          
-          // Convert back to original precision
-          grad_weight.copy_(grad_weight_double.to(grad_weight.scalar_type()));
-          if (grad_bias.defined() && grad_bias_double.defined()) {
-            grad_bias.copy_(grad_bias_double.to(grad_bias.scalar_type()));
-          }
-        } else {
-          // Standard float precision path
-          onednn::convolution_backward_weights(
-              grad_weight,
-              grad_bias,
-              grad_output_,
-              input_,
-              weight_.sizes(),
-              padding_,
-              padding_,
-              stride_,
-              dilation_,
-              groups_);
-        }
+        onednn::convolution_backward_weights(
+            grad_weight,
+            grad_bias,
+            grad_output_,
+            input_,
+            weight_.sizes(),
+            padding_,
+            padding_,
+            stride_,
+            dilation_,
+            groups_);
       }
     }
     if (!output_mask[1]) {

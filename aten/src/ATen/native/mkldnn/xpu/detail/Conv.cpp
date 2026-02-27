@@ -158,7 +158,8 @@ sycl::event convolution(
   size_t scratchpad_size = conv_fwd_pd.scratchpad_desc().get_size();
   at::Tensor scratchpad_tensor = at::empty(
       {static_cast<int64_t>(scratchpad_size)},
-      src.options().dtype(at::kByte));
+      src.options().dtype(at::kByte),
+      std::nullopt);
   auto scratchpad_m = make_onednn_memory(
       conv_fwd_pd.scratchpad_desc(), engine, scratchpad_tensor.data_ptr());
   args.insert({DNNL_ARG_SCRATCHPAD, scratchpad_m});
@@ -263,7 +264,8 @@ sycl::event convolution_backward_weights(
   size_t scratchpad_size = conv_bwd_w_pd.scratchpad_desc().get_size();
   at::Tensor scratchpad_tensor = at::empty(
       {static_cast<int64_t>(scratchpad_size)},
-      src.options().dtype(at::kByte));
+      src.options().dtype(at::kByte),
+      std::nullopt);
   auto scratchpad_m = make_onednn_memory(
       conv_bwd_w_pd.scratchpad_desc(), engine, scratchpad_tensor.data_ptr());
   args.insert({DNNL_ARG_SCRATCHPAD, scratchpad_m});
@@ -309,7 +311,6 @@ sycl::event convolution_backward_data(
   // Always enable deterministic mode for XPU to ensure reproducible results
   pattr.set_deterministic(true);
 #endif
-
 
   pattr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
   dnnl::memory::dims _stride = stride.vec();
@@ -360,7 +361,8 @@ sycl::event convolution_backward_data(
   size_t scratchpad_size = conv_backward_data_pd.scratchpad_desc().get_size();
   at::Tensor scratchpad_tensor = at::empty(
       {static_cast<int64_t>(scratchpad_size)},
-      diff_dst.options().dtype(at::kByte));
+      diff_dst.options().dtype(at::kByte),
+      std::nullopt);
   auto scratchpad_memory = make_onednn_memory(
       conv_backward_data_pd.scratchpad_desc(),
       engine,
