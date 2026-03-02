@@ -405,6 +405,7 @@ def get_fallback_and_vmap_exhaustive(
             batch_size,
             compute_loop_out=False,
         ):
+            print(batched_args, in_dims, kwarg_values, quantities)
             assert quantities[1] is None
             yield (quantities[0], expected_batched)
             yield (quantities[2], quantities[3])
