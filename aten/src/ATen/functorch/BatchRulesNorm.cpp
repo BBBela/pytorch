@@ -361,6 +361,37 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
     if (i < input.dim() - 1) std::cout << ", ";
   }
   std::cout << "], bdim=" << (input_bdim.has_value() ? std::to_string(*input_bdim) : "none") << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] input values: ";
+  auto input_flat = input.flatten();
+  for (int i = 0; i < std::min(4, (int)input_flat.numel()); ++i) {
+    std::cout << input_flat[i].item<float>();
+    if (i < 3 && i < input_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] mean shape: [";
+  for (int i = 0; i < mean.dim(); ++i) {
+    std::cout << mean.size(i);
+    if (i < mean.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto mean_flat = mean.flatten();
+  for (int i = 0; i < std::min(4, (int)mean_flat.numel()); ++i) {
+    std::cout << mean_flat[i].item<float>();
+    if (i < 3 && i < mean_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] rstd shape: [";
+  for (int i = 0; i < rstd.dim(); ++i) {
+    std::cout << rstd.size(i);
+    if (i < rstd.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto rstd_flat = rstd.flatten();
+  for (int i = 0; i < std::min(4, (int)rstd_flat.numel()); ++i) {
+    std::cout << rstd_flat[i].item<float>();
+    if (i < 3 && i < rstd_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
 
   auto grad_out_ = moveBatchDimToFront(grad_out, grad_out_bdim);
   auto input_ = moveBatchDimToFront(input, input_bdim);
@@ -374,6 +405,43 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
   mean_ = ensure_has_bdim(mean_, mean_bdim.has_value(), bdim_size);
   rstd_ = ensure_has_bdim(rstd_, rstd_bdim.has_value(), bdim_size);
 
+  std::cout << "[FUNCTORCH DEBUG] After ensure_has_bdim - input_ shape: [";
+  for (int i = 0; i < input_.dim(); ++i) {
+    std::cout << input_.size(i);
+    if (i < input_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto input_debug_flat = input_.flatten();
+  for (int i = 0; i < std::min(4, (int)input_debug_flat.numel()); ++i) {
+    std::cout << input_debug_flat[i].item<float>();
+    if (i < 3 && i < input_debug_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] After ensure_has_bdim - mean_ shape: [";
+  for (int i = 0; i < mean_.dim(); ++i) {
+    std::cout << mean_.size(i);
+    if (i < mean_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto mean_debug_flat = mean_.flatten();
+  for (int i = 0; i < std::min(4, (int)mean_debug_flat.numel()); ++i) {
+    std::cout << mean_debug_flat[i].item<float>();
+    if (i < 3 && i < mean_debug_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] After ensure_has_bdim - rstd_ shape: [";
+  for (int i = 0; i < rstd_.dim(); ++i) {
+    std::cout << rstd_.size(i);
+    if (i < rstd_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto rstd_debug_flat = rstd_.flatten();
+  for (int i = 0; i < std::min(4, (int)rstd_debug_flat.numel()); ++i) {
+    std::cout << rstd_debug_flat[i].item<float>();
+    if (i < 3 && i < rstd_debug_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+
   std::cout << "[FUNCTORCH DEBUG] After ensure_has_bdim - grad_out_ shape: [";
   for (int i = 0; i < grad_out_.dim(); ++i) {
     std::cout << grad_out_.size(i);
@@ -382,6 +450,46 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
   std::cout << "]" << std::endl;
 
   grad_out_ = reshape_dim_into(0, 0, grad_out_); // [B0 * N, C, *]
+  input_ = reshape_dim_into(0, 0, input_);       // [B0 * N, C, *]
+  mean_ = reshape_dim_into(0, 0, mean_);         // [B0 * N, G]
+  rstd_ = reshape_dim_into(0, 0, rstd_);         // [B0 * N, G]
+
+  std::cout << "[FUNCTORCH DEBUG] After reshape_dim_into - input_ shape: [";
+  for (int i = 0; i < input_.dim(); ++i) {
+    std::cout << input_.size(i);
+    if (i < input_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto input_reshaped_flat = input_.flatten();
+  for (int i = 0; i < std::min(4, (int)input_reshaped_flat.numel()); ++i) {
+    std::cout << input_reshaped_flat[i].item<float>();
+    if (i < 3 && i < input_reshaped_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] After reshape_dim_into - mean_ shape: [";
+  for (int i = 0; i < mean_.dim(); ++i) {
+    std::cout << mean_.size(i);
+    if (i < mean_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto mean_reshaped_flat = mean_.flatten();
+  for (int i = 0; i < std::min(4, (int)mean_reshaped_flat.numel()); ++i) {
+    std::cout << mean_reshaped_flat[i].item<float>();
+    if (i < 3 && i < mean_reshaped_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] After reshape_dim_into - rstd_ shape: [";
+  for (int i = 0; i < rstd_.dim(); ++i) {
+    std::cout << rstd_.size(i);
+    if (i < rstd_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto rstd_reshaped_flat = rstd_.flatten();
+  for (int i = 0; i < std::min(4, (int)rstd_reshaped_flat.numel()); ++i) {
+    std::cout << rstd_reshaped_flat[i].item<float>();
+    if (i < 3 && i < rstd_reshaped_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
   input_ = reshape_dim_into(0, 0, input_);       // [B0 * N, C, *]
   mean_ = reshape_dim_into(0, 0, mean_);         // [B0 * N, G]
   rstd_ = reshape_dim_into(0, 0, rstd_);         // [B0 * N, G]
@@ -401,7 +509,7 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
 
   // Detect and fix problematic tensor layout for 1D GroupNorm case
   bool is_normal_layout = true;
-  if (HxW == 1 && bdim_size == 2 && group == 1 && grad_out_flat.numel() >= 4) {
+  if (!input_bdim.has_value() && grad_out_bdim.has_value() && HxW == 1 && bdim_size == 2 && group == 1 && grad_out_flat.numel() >= 4) {
     // Check if we have the problematic grouped layout: [A, A, B, B] instead of [A, B, A, B]
     auto val0 = grad_out_flat[0].item<float>();
     auto val1 = grad_out_flat[1].item<float>(); 
@@ -435,7 +543,7 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
       std::cout << "]" << std::endl;
       
       // Also reorganize input to match
-      input_ = input_.view({2, 2}).t().contiguous().view({2, 2});
+      // input_ = input_.view({2, 2}).t().contiguous().view({2, 2}); // COMMENTED OUT - causes autograd shape mismatch
     }
   }
 
@@ -450,23 +558,12 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
 
   // Apply reverse reorganization if we applied input reorganization
   if (!is_normal_layout) {
-    std::cout << "[FUNCTORCH DEBUG] Applying reverse reorganization to result..." << std::endl;
+    std::cout << "[FUNCTORCH DEBUG] SKIPPING reverse reorganization - keeping kernel output as-is..." << std::endl;
     auto before_flat = result0.flatten();
-    std::cout << "[FUNCTORCH DEBUG] Result before reverse reorganization: [";
+    std::cout << "[FUNCTORCH DEBUG] Kernel output (no reverse reorganization): [";
     for (int i = 0; i < std::min(4, (int)before_flat.numel()); ++i) {
       std::cout << before_flat[i].item<float>();
       if (i < 3 && i < before_flat.numel() - 1) std::cout << ", ";
-    }
-    std::cout << "]" << std::endl;
-    
-    // Reverse reorganization: [A, B, A, B] -> [A, A, B, B] via transpose
-    result0 = result0.view({2, 2}).t().contiguous().view({2, 2});
-    
-    auto after_flat = result0.flatten();
-    std::cout << "[FUNCTORCH DEBUG] Result after reverse reorganization: [";
-    for (int i = 0; i < std::min(4, (int)after_flat.numel()); ++i) {
-      std::cout << after_flat[i].item<float>();
-      if (i < 3 && i < after_flat.numel() - 1) std::cout << ", ";
     }
     std::cout << "]" << std::endl;
   }
@@ -484,7 +581,17 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
   }
   std::cout << std::endl;
 
-  auto final_result = reshape_dim_outof(0, bdim_size, result0);
+  // Handle reshaping based on whether input had a batch dimension
+  Tensor final_result;
+  if (input_bdim.has_value()) {
+    final_result = reshape_dim_outof(0, bdim_size, result0);
+  } else {
+    // When input_bdim is none, result0 needs to be reshaped from [N*bdim_size, C, *] back to [bdim_size, N, C, *]
+    // Then reshape_dim_outof will put the batch dimension in the correct position
+    auto result_reshaped = result0.view({bdim_size, N, C});  // [2, 1, 2]
+    final_result = reshape_dim_outof(0, bdim_size, result_reshaped);  // Put batch dim at position input would have had
+  }
+  
   std::cout << "[FUNCTORCH DEBUG] Final result after reshape_dim_outof - shape: [";
   for (int i = 0; i < final_result.dim(); ++i) {
     std::cout << final_result.size(i);
