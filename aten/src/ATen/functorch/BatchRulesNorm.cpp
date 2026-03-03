@@ -349,12 +349,65 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
   // DEBUG: Track batch dimensions and input characteristics
   std::cout << "[FUNCTORCH DEBUG] group_norm_backward_no_weight_bias_batch_rule ENTRY" << std::endl;
   std::cout << "[FUNCTORCH DEBUG] N=" << N << ", C=" << C << ", HxW=" << HxW << ", group=" << group << std::endl;
+  
+  std::cout << "\n=== RAW INPUT TENSOR ANALYSIS ===" << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] RAW grad_out shape: [";
+  for (int i = 0; i < grad_out.dim(); ++i) {
+    std::cout << grad_out.size(i);
+    if (i < grad_out.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], strides: [";
+  for (int i = 0; i < grad_out.dim(); ++i) {
+    std::cout << grad_out.stride(i);
+    if (i < grad_out.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], bdim=" << (grad_out_bdim.has_value() ? std::to_string(*grad_out_bdim) : "none") << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] RAW grad_out values: ";
+  auto raw_grad_out_flat = grad_out.flatten();
+  for (int i = 0; i < std::min(8, (int)raw_grad_out_flat.numel()); ++i) {
+    std::cout << raw_grad_out_flat[i].item<float>();
+    if (i < 7 && i < raw_grad_out_flat.numel() - 1) std::cout << ", ";
+  }
+  if (raw_grad_out_flat.numel() > 8) std::cout << "...";
+  std::cout << "\nThis is what VMAP passed to us directly - if [A,A,B,B] pattern is here, vmap created it!" << std::endl;
+  std::cout << "==================================\n" << std::endl;
+  
+  // EDUCATIONAL: Explain Group Norm Theory
+  std::cout << "\n=== GROUP NORM THEORY EXPLANATION ===" << std::endl;
+  std::cout << "Group Norm divides C channels into G groups of C/G channels each." << std::endl;
+  std::cout << "For each group, it computes mean & variance across (N, C/G, H, W) elements." << std::endl;
+  std::cout << "Current setup: C=" << C << " channels, G=" << group << " groups" << std::endl;
+  if (C % group == 0) {
+    int channels_per_group = C / group;
+    std::cout << "  → " << channels_per_group << " channels per group" << std::endl;
+    std::cout << "  → Statistics computed over " << (N * channels_per_group * HxW) << " elements per group" << std::endl;
+  } else {
+    std::cout << "  → ERROR: C=" << C << " not divisible by groups=" << group << std::endl;
+  }
+  std::cout << "Expected input shape: [N=" << N << ", C=" << C << ", *spatial_dims]" << std::endl;
+  std::cout << "WHY CHANNELS MATTER: Splitting channels breaks the group structure!" << std::endl;
+  std::cout << "  - Correct: vmap over batch/spatial dims preserves [N, C, *] per operation" << std::endl;
+  std::cout << "  - WRONG: vmap over channel dim creates [N, 1, *] → breaks group statistics" << std::endl;
+  std::cout << "===================================\n" << std::endl;
   std::cout << "[FUNCTORCH DEBUG] grad_out shape: [";
   for (int i = 0; i < grad_out.dim(); ++i) {
     std::cout << grad_out.size(i);
     if (i < grad_out.dim() - 1) std::cout << ", ";
   }
+  std::cout << "], strides: [";
+  for (int i = 0; i < grad_out.dim(); ++i) {
+    std::cout << grad_out.stride(i);
+    if (i < grad_out.dim() - 1) std::cout << ", ";
+  }
   std::cout << "], bdim=" << (grad_out_bdim.has_value() ? std::to_string(*grad_out_bdim) : "none") << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] grad_out values: ";
+  auto grad_out_flat1 = grad_out.flatten();
+  for (int i = 0; i < std::min(8, (int)grad_out_flat1.numel()); ++i) {
+    std::cout << grad_out_flat1[i].item<float>();
+    if (i < 7 && i < grad_out_flat1.numel() - 1) std::cout << ", ";
+  }
+  if (grad_out_flat1.numel() > 8) std::cout << "...";
+  std::cout << std::endl;
   std::cout << "[FUNCTORCH DEBUG] input shape: [";
   for (int i = 0; i < input.dim(); ++i) {
     std::cout << input.size(i);
@@ -394,16 +447,119 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
   std::cout << std::endl;
 
   auto grad_out_ = moveBatchDimToFront(grad_out, grad_out_bdim);
+  
+  std::cout << "\n=== MOVE_BATCH_DIM_TO_FRONT TRANSFORMATION ===" << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] AFTER moveBatchDimToFront - grad_out_ shape: [";
+  for (int i = 0; i < grad_out_.dim(); ++i) {
+    std::cout << grad_out_.size(i);
+    if (i < grad_out_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], strides: [";
+  for (int i = 0; i < grad_out_.dim(); ++i) {
+    std::cout << grad_out_.stride(i);
+    if (i < grad_out_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto grad_out_moved_flat = grad_out_.flatten();
+  for (int i = 0; i < std::min(8, (int)grad_out_moved_flat.numel()); ++i) {
+    std::cout << grad_out_moved_flat[i].item<float>();
+    if (i < 7 && i < grad_out_moved_flat.numel() - 1) std::cout << ", ";
+  }
+  if (grad_out_moved_flat.numel() > 8) std::cout << "...";
+  std::cout << std::endl;
+  
+  // Check if moveBatchDimToFront changed the pattern
+  if (grad_out_moved_flat.numel() >= 4) {
+    auto val0 = grad_out_moved_flat[0].item<float>();
+    auto val1 = grad_out_moved_flat[1].item<float>();
+    auto val2 = grad_out_moved_flat[2].item<float>();
+    auto val3 = grad_out_moved_flat[3].item<float>();
+    
+    bool is_grouped = (std::abs(val0 - val1) < 1e-6f) && (std::abs(val2 - val3) < 1e-6f);
+    
+    if (is_grouped) {
+      std::cout << "🔴 moveBatchDimToFront preserved/created GROUPED pattern [A,A,B,B]" << std::endl;
+    } else {
+      std::cout << "🟢 moveBatchDimToFront preserved/created INTERLEAVED pattern [A,B,A,B]" << std::endl;
+    }
+  }
+  std::cout << "============================================\n" << std::endl;
+  
   auto input_ = moveBatchDimToFront(input, input_bdim);
   auto mean_ = moveBatchDimToFront(mean, mean_bdim);
   auto rstd_ = moveBatchDimToFront(rstd, rstd_bdim);
 
   const auto bdim_size = get_bdim_size2(grad_out, grad_out_bdim, input, input_bdim);
   std::cout << "[FUNCTORCH DEBUG] bdim_size=" << bdim_size << std::endl;
-  grad_out_ = ensure_has_bdim(grad_out, grad_out_bdim.has_value(), bdim_size);
+  
+  // EDUCATIONAL: Explain what different bdim configurations mean
+  std::cout << "\n=== BATCH DIMENSION ANALYSIS ===" << std::endl;
+  if (input_bdim.has_value()) {
+    std::cout << "INPUT has batch dim at position " << *input_bdim << " → vmap is batching over INPUT" << std::endl;
+    std::cout << "  This means: multiple different inputs, each needing separate group norm" << std::endl;
+    std::cout << "  Mathematical effect: Each input gets independent mean/variance calculation" << std::endl;
+  } else {
+    std::cout << "INPUT has NO batch dim → same input reused for all batch elements" << std::endl;
+    std::cout << "  This means: same input, but different grad_out cotangents" << std::endl;
+    std::cout << "  Mathematical effect: Input statistics are shared, only gradients differ" << std::endl;
+  }
+  
+  if (grad_out_bdim.has_value()) {
+    std::cout << "GRAD_OUT has batch dim at position " << *grad_out_bdim << " → vmap is batching over GRAD_OUT" << std::endl;
+    if (*grad_out_bdim == grad_out.dim() - 1) {
+      std::cout << "  WARNING: Batch dim is LAST dimension (channels/spatial)" << std::endl;
+      std::cout << "  This means: each vmap call gets PARTIAL channels → BREAKS GROUP NORM!" << std::endl;
+      std::cout << "  Expected: batch dim should be 0 (batch dimension)" << std::endl;
+    } else if (*grad_out_bdim == 0) {
+      std::cout << "  GOOD: Batch dim is FIRST dimension (proper batching)" << std::endl;
+      std::cout << "  This means: each vmap call gets FULL channel set → preserves group norm" << std::endl;
+    }
+  }
+  std::cout << "===============================\n" << std::endl;
+  
+  // CRITICAL FIX: ensure_has_bdim must operate on the MOVED tensor (grad_out_),
+  // not the original tensor (grad_out), to preserve layout from moveBatchDimToFront
+  grad_out_ = ensure_has_bdim(grad_out_, grad_out_bdim.has_value(), bdim_size);
   input_ = ensure_has_bdim(input_, input_bdim.has_value(), bdim_size);
   mean_ = ensure_has_bdim(mean_, mean_bdim.has_value(), bdim_size);
   rstd_ = ensure_has_bdim(rstd_, rstd_bdim.has_value(), bdim_size);
+
+  std::cout << "\n=== ENSURE_HAS_BDIM TRANSFORMATION ===" << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] AFTER ensure_has_bdim - grad_out_ shape: [";
+  for (int i = 0; i < grad_out_.dim(); ++i) {
+    std::cout << grad_out_.size(i);
+    if (i < grad_out_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], strides: [";
+  for (int i = 0; i < grad_out_.dim(); ++i) {
+    std::cout << grad_out_.stride(i);
+    if (i < grad_out_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto grad_out_ensured_flat = grad_out_.flatten();
+  for (int i = 0; i < std::min(8, (int)grad_out_ensured_flat.numel()); ++i) {
+    std::cout << grad_out_ensured_flat[i].item<float>();
+    if (i < 7 && i < grad_out_ensured_flat.numel() - 1) std::cout << ", ";
+  }
+  if (grad_out_ensured_flat.numel() > 8) std::cout << "...";
+  std::cout << std::endl;
+  
+  // Check if ensure_has_bdim changed the pattern
+  if (grad_out_ensured_flat.numel() >= 4) {
+    auto val0 = grad_out_ensured_flat[0].item<float>();
+    auto val1 = grad_out_ensured_flat[1].item<float>();
+    auto val2 = grad_out_ensured_flat[2].item<float>();
+    auto val3 = grad_out_ensured_flat[3].item<float>();
+    
+    bool is_grouped = (std::abs(val0 - val1) < 1e-6f) && (std::abs(val2 - val3) < 1e-6f);
+    
+    if (is_grouped) {
+      std::cout << "🔴 ensure_has_bdim preserved/created GROUPED pattern [A,A,B,B]" << std::endl;
+    } else {
+      std::cout << "🟢 ensure_has_bdim preserved/created INTERLEAVED pattern [A,B,A,B]" << std::endl;
+    }
+  }
+  std::cout << "========================================\n" << std::endl;
 
   std::cout << "[FUNCTORCH DEBUG] After ensure_has_bdim - input_ shape: [";
   for (int i = 0; i < input_.dim(); ++i) {
@@ -449,10 +605,68 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
   }
   std::cout << "]" << std::endl;
 
+  std::cout << "\n=== RESHAPE_DIM_INTO TRANSFORMATION ANALYSIS ===" << std::endl;
+  std::cout << "[FUNCTORCH DEBUG] BEFORE reshape_dim_into - grad_out_ shape: [";
+  for (int i = 0; i < grad_out_.dim(); ++i) {
+    std::cout << grad_out_.size(i);
+    if (i < grad_out_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], strides: [";
+  for (int i = 0; i < grad_out_.dim(); ++i) {
+    std::cout << grad_out_.stride(i);
+    if (i < grad_out_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto grad_out_before_flat = grad_out_.flatten();
+  for (int i = 0; i < std::min(4, (int)grad_out_before_flat.numel()); ++i) {
+    std::cout << grad_out_before_flat[i].item<float>();
+    if (i < 3 && i < grad_out_before_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+  std::cout << "About to call: reshape_dim_into(0, 0, grad_out_) to merge dims [0] and [0]" << std::endl;
+
   grad_out_ = reshape_dim_into(0, 0, grad_out_); // [B0 * N, C, *]
   input_ = reshape_dim_into(0, 0, input_);       // [B0 * N, C, *]
   mean_ = reshape_dim_into(0, 0, mean_);         // [B0 * N, G]
   rstd_ = reshape_dim_into(0, 0, rstd_);         // [B0 * N, G]
+
+  std::cout << "[FUNCTORCH DEBUG] AFTER reshape_dim_into - grad_out_ shape: [";
+  for (int i = 0; i < grad_out_.dim(); ++i) {
+    std::cout << grad_out_.size(i);
+    if (i < grad_out_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], strides: [";
+  for (int i = 0; i < grad_out_.dim(); ++i) {
+    std::cout << grad_out_.stride(i);
+    if (i < grad_out_.dim() - 1) std::cout << ", ";
+  }
+  std::cout << "], values: ";
+  auto grad_out_after_flat = grad_out_.flatten();
+  for (int i = 0; i < std::min(4, (int)grad_out_after_flat.numel()); ++i) {
+    std::cout << grad_out_after_flat[i].item<float>();
+    if (i < 3 && i < grad_out_after_flat.numel() - 1) std::cout << ", ";
+  }
+  std::cout << std::endl;
+  
+  // Check if this is where [A,B,A,B] becomes [A,A,B,B]
+  if (grad_out_after_flat.numel() >= 4) {
+    auto val0 = grad_out_after_flat[0].item<float>();
+    auto val1 = grad_out_after_flat[1].item<float>();
+    auto val2 = grad_out_after_flat[2].item<float>();
+    auto val3 = grad_out_after_flat[3].item<float>();
+    
+    bool is_grouped = (std::abs(val0 - val1) < 1e-6f) && (std::abs(val2 - val3) < 1e-6f);
+    bool is_interleaved = (std::abs(val0 - val2) < 1e-6f) && (std::abs(val1 - val3) < 1e-6f);
+    
+    if (is_grouped) {
+      std::cout << "🔴 CONFIRMED: reshape_dim_into created GROUPED pattern [A,A,B,B]!" << std::endl;
+    } else if (is_interleaved) {
+      std::cout << "🟢 Pattern after reshape_dim_into is INTERLEAVED [A,B,A,B]" << std::endl;
+    } else {
+      std::cout << "🔵 Pattern after reshape_dim_into: MIXED [" << val0 << "," << val1 << "," << val2 << "," << val3 << "]" << std::endl;
+    }
+  }
+  std::cout << "=======================================\n" << std::endl;
 
   std::cout << "[FUNCTORCH DEBUG] After reshape_dim_into - input_ shape: [";
   for (int i = 0; i < input_.dim(); ++i) {
@@ -499,6 +713,11 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
     std::cout << grad_out_.size(i);
     if (i < grad_out_.dim() - 1) std::cout << ", ";
   }
+  std::cout << "], strides: [";
+  for (int i = 0; i < grad_out_.dim(); ++i) {
+    std::cout << grad_out_.stride(i);
+    if (i < grad_out_.dim() - 1) std::cout << ", ";
+  }
   std::cout << "], values: ";
   auto grad_out_flat = grad_out_.flatten();
   for (int i = 0; i < std::min(4, (int)grad_out_flat.numel()); ++i) {
@@ -507,14 +726,20 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
   }
   std::cout << std::endl;
 
-  // Detect and fix problematic tensor layout for 1D GroupNorm case
-  bool is_normal_layout = true;
+  // Detect and analyze problematic tensor layout for 1D GroupNorm case
   if (!input_bdim.has_value() && grad_out_bdim.has_value() && HxW == 1 && bdim_size == 2 && group == 1 && grad_out_flat.numel() >= 4) {
+    
+    std::cout << "\n=== LAYOUT PROBLEM ANALYSIS ===" << std::endl;
+    std::cout << "Detected problematic case: 1D GroupNorm with batched grad_out but unbatched input" << std::endl;
+    std::cout << "This happens when vmap(..., in_dims=-1) splits the CHANNEL dimension" << std::endl;
+    
     // Check if we have the problematic grouped layout: [A, A, B, B] instead of [A, B, A, B]
     auto val0 = grad_out_flat[0].item<float>();
     auto val1 = grad_out_flat[1].item<float>(); 
     auto val2 = grad_out_flat[2].item<float>();
     auto val3 = grad_out_flat[3].item<float>();
+    
+    std::cout << "Tensor values: [" << val0 << ", " << val1 << ", " << val2 << ", " << val3 << "]" << std::endl;
     
     // Calculate differences to detect layout pattern
     float diff_01 = std::abs(val0 - val1);  // Same batch elements
@@ -522,29 +747,27 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
     float diff_02 = std::abs(val0 - val2);  // Different batch elements
     float diff_13 = std::abs(val1 - val3);  // Different batch elements
     
+    std::cout << "Pattern analysis:" << std::endl;
+    std::cout << "  Adjacent pairs: diff(0,1)=" << diff_01 << ", diff(2,3)=" << diff_23 << std::endl;
+    std::cout << "  Cross pairs: diff(0,2)=" << diff_02 << ", diff(1,3)=" << diff_13 << std::endl;
+    
     // Detect grouped layout: same-batch values are closer than cross-batch values
     float avg_same = (diff_01 + diff_23) * 0.5f;
     float avg_cross = (diff_02 + diff_13) * 0.5f;
     
+    std::cout << "  Average same-batch diff: " << avg_same << std::endl;
+    std::cout << "  Average cross-batch diff: " << avg_cross << std::endl;
+    
     if (avg_same < avg_cross && avg_cross > 1e-6f) {
-      is_normal_layout = false;
-      std::cout << "[FUNCTORCH DEBUG] PROBLEMATIC LAYOUT DETECTED! Applying tensor reorganization..." << std::endl;
-      std::cout << "[FUNCTORCH DEBUG] Pattern: [" << val0 << ", " << val1 << ", " << val2 << ", " << val3 << "]" << std::endl;
-      
-      // Reorganize: [A, A, B, B] -> [A, B, A, B] via transpose  
-      grad_out_ = grad_out_.view({2, 2}).t().contiguous().view({2, 2});
-      
-      auto reorganized_flat = grad_out_.flatten();
-      std::cout << "[FUNCTORCH DEBUG] After reorganization: [";
-      for (int i = 0; i < std::min(4, (int)reorganized_flat.numel()); ++i) {
-        std::cout << reorganized_flat[i].item<float>();
-        if (i < 3 && i < reorganized_flat.numel() - 1) std::cout << ", ";
-      }
-      std::cout << "]" << std::endl;
-      
-      // Also reorganize input to match
-      // input_ = input_.view({2, 2}).t().contiguous().view({2, 2}); // COMMENTED OUT - causes autograd shape mismatch
+      std::cout << "CONCLUSION: GROUPED layout detected [A,A,B,B] but NO FIX APPLIED!" << std::endl;
+      std::cout << "ROOT CAUSE: vmap in_dims=-1 created per-channel operations instead of per-batch operations" << std::endl;
+      std::cout << "MATHEMATICAL ISSUE: Group norm needs full channel sets, not individual channels" << std::endl;
+      std::cout << "THIS WILL CAUSE THE TEST TO FAIL - which shows the fundamental mathematical incompatibility" << std::endl;
+    } else {
+      std::cout << "CONCLUSION: NORMAL layout detected [A,B,A,B] → no fix needed" << std::endl;
+      std::cout << "This indicates proper batching (likely vmap in_dims=0)" << std::endl;
     }
+    std::cout << "===============================\n" << std::endl;
   }
 
   std::cout << "[FUNCTORCH DEBUG] Calling native_group_norm_backward with N*bdim_size=" << (N * bdim_size) << std::endl;
@@ -555,18 +778,6 @@ static at::Tensor group_norm_backward_no_weight_bias_batch_rule(
       mean_.contiguous(),
       rstd_.contiguous(),
       std::nullopt, N * bdim_size, C, HxW, group, {true, false, false}));
-
-  // Apply reverse reorganization if we applied input reorganization
-  if (!is_normal_layout) {
-    std::cout << "[FUNCTORCH DEBUG] SKIPPING reverse reorganization - keeping kernel output as-is..." << std::endl;
-    auto before_flat = result0.flatten();
-    std::cout << "[FUNCTORCH DEBUG] Kernel output (no reverse reorganization): [";
-    for (int i = 0; i < std::min(4, (int)before_flat.numel()); ++i) {
-      std::cout << before_flat[i].item<float>();
-      if (i < 3 && i < before_flat.numel() - 1) std::cout << ", ";
-    }
-    std::cout << "]" << std::endl;
-  }
 
   std::cout << "[FUNCTORCH DEBUG] Result before reshape_dim_outof - shape: [";
   for (int i = 0; i < result0.dim(); ++i) {
