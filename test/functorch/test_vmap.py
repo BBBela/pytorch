@@ -38,7 +38,7 @@ from functorch_additional_op_db import additional_op_db
 import functorch
 import torch
 import torch.nn.functional as F
-from functorch import grad, grad_and_value, jacfwd, jvp, vjp, vmap
+from torch.func import grad, grad_and_value, jacfwd, jvp, vjp, vmap
 from functorch.experimental import chunk_vmap
 from torch import Tensor
 from torch._C._functorch import reshape_dim_into, reshape_dim_outof
@@ -4942,6 +4942,22 @@ class TestVmapOperatorsOpInfo(TestCase):
         weight = torch.randn(B, C)
         bias = torch.randn(B, C)
         test(self, op, (x, 4, weight, bias), in_dims=(0, None, 0, 0))
+
+    def test_group_norm_layout_corruption(self, device):
+        def op_function(cotangent):
+            input = torch.tensor([[-6.517, -6.264]], device=device, requires_grad=True)
+            result = F.group_norm(input, num_groups=1)
+            return torch.autograd.grad(result, input, grad_outputs=cotangent)[0]
+
+        cotangent = torch.tensor([[-0.0236, -0.1431]], device=device)
+        result_in_dims_0 = vmap(op_function, in_dims=0)(
+            cotangent.unsqueeze(0).expand(2, -1, -1)
+        )
+        result_in_dims_neg1 = vmap(op_function, in_dims=-1)(
+            cotangent.unsqueeze(-1).expand(-1, -1, 2)
+        )
+
+        self.assertEqual(result_in_dims_0, result_in_dims_neg1)
 
     def test_index_put(self, device):
         def test(f, t, idx, values):
