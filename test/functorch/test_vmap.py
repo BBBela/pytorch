@@ -4946,6 +4946,7 @@ class TestVmapOperatorsOpInfo(TestCase):
         test(self, op, (x, 4, weight, bias), in_dims=(0, None, 0, 0))
 
     def test_group_norm_layout_corruption(self, device):
+        # Regression test for https://github.com/pytorch/pytorch/issues/176432
         def op_function(cotangent):
             input = torch.tensor([[-6.517, -6.264]], device=device, requires_grad=True)
             result = F.group_norm(input, num_groups=1)
