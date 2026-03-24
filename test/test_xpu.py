@@ -567,6 +567,26 @@ print(torch.xpu.is_initialized())
             torch.empty(1024 * 1024 * 1024 * 1024, device="xpu")
 
     @serialTest()
+    @unittest.skipIf(
+        int(torch.version.xpu) < 20250000,
+        "Test requires SYCL compiler version 2025.0.0 or newer.",
+    )
+    def test_operator_output_oom(self):
+        gc.collect()
+        torch.xpu.empty_cache()
+        free_bytes, _ = torch.xpu.mem_get_info()
+        alloc_bytes = free_bytes * 5 // 9
+        tensor = None
+        try:
+            tensor = torch.empty(alloc_bytes, dtype=torch.bool, device="xpu")
+            with self.assertRaises(torch.OutOfMemoryError):
+                tensor.clone()
+        finally:
+            del tensor
+            gc.collect()
+            torch.xpu.empty_cache()
+
+    @serialTest()
     def test_1mb_allocation_uses_small_block(self):
         gc.collect()
         torch.xpu.empty_cache()
