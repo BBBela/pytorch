@@ -900,6 +900,16 @@ class DeviceCachingAllocator {
     }
     bool active_pool =
         p.pool->owner_PrivatePool && p.pool->owner_PrivatePool->allocator();
+
+    const auto& raw_device = c10::xpu::get_raw_device(p.device());
+    if (!active_pool && raw_device.has(sycl::aspect::ext_intel_free_memory)) {
+      const size_t device_free =
+          raw_device.get_info<sycl::ext::intel::info::device::free_memory>();
+      if (size > device_free) {
+        return false;
+      }
+    }
+
     if (set_fraction &&
         stats.reserved_bytes[static_cast<size_t>(StatType::AGGREGATE)].current +
                 size >
