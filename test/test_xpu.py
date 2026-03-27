@@ -571,7 +571,7 @@ print(torch.xpu.is_initialized())
         int(torch.version.xpu) < 20250000,
         "Test requires SYCL compiler version 2025.0.0 or newer.",
     )
-    def test_operator_output_oom(self):
+    def test_allocation_raises_oom(self):
         gc.collect()
         torch.xpu.empty_cache()
         free_bytes, _ = torch.xpu.mem_get_info()
