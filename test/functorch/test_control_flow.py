@@ -1314,7 +1314,10 @@ def forward(self, pred_1, x_1):
             return x.cos()
 
         for pred, fn in zip(
-            [torch.tensor(False, device=device_type), torch.tensor(True, device=device_type)],
+            [
+                torch.tensor(False, device=device_type),
+                torch.tensor(True, device=device_type),
+            ],
             [false_fn, true_fn],
         ):
             x = torch.randn(4, requires_grad=True, device=device_type)
@@ -6265,7 +6268,9 @@ class GraphModule(torch.nn.Module):
 
         def fct_wrong_device(x, y):
             return (x + y).to(
-                torch.device("cpu") if device.type == device_type else torch.device(device_type)
+                torch.device("cpu")
+                if device.type == device_type
+                else torch.device(device_type)
             )
 
         def fct_wrong_stride(x, y):
