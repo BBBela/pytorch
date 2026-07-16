@@ -2532,7 +2532,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_compile(self, reverse, compile_mode, device, autograd):
         def add2(x: torch.Tensor, y: torch.Tensor):
@@ -2643,7 +2643,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize(
         "dtype",
         [
@@ -2715,7 +2715,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_dim(self, reverse, compile_mode, device, autograd):
         import random
@@ -2757,7 +2757,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_binary_operator(self, reverse, compile_mode, device, autograd):
         state_dim = 20
@@ -2819,7 +2819,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_tuple(self, reverse, compile_mode, device, autograd):
         x = torch.randn(3, 2, 2, device=device, requires_grad=autograd)
@@ -2922,7 +2922,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_complex_pytree(self, reverse, compile_mode, device, autograd):
         # Init and input have same pytree
@@ -3002,7 +3002,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("compile_mode", ["none", "eager"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_downstream_scan_matmul(self, compile_mode, reverse, device, autograd):
         inp = torch.randn(3, 10, 2, device=device, requires_grad=autograd)
@@ -3041,7 +3041,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("compile_mode", ["none", "eager"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_downstream_scan_scan_dim(
         self, compile_mode, reverse, device, autograd
@@ -3095,7 +3095,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_non_pointwise(self, reverse, compile_mode, device, autograd):
         scan_fct = compile_mode_helper(scan, compile_mode)
@@ -3124,7 +3124,7 @@ def forward(self, pred_1, x_1):
 
     @requires_gpu
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     def test_scan_compile_cnt(self, reverse, device):
         dim = 1
 
@@ -3439,7 +3439,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_init(self, reverse, compile_mode, device, autograd):
         scan_fct = compile_mode_helper(scan, compile_mode)
@@ -3546,7 +3546,7 @@ def forward(self, pred_1, x_1):
 
     @requires_gpu
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     def test_scan_init_wrong_pytree_complex(self, reverse, device):
         x = torch.randn(3, 2, 2, device=device)
         y = torch.randn(3, 2, 2, device=device)
@@ -3584,7 +3584,7 @@ def forward(self, pred_1, x_1):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_init_pytree_complex(self, reverse, compile_mode, device, autograd):
         def fct_pointwise_different_output(x, y):
@@ -3846,7 +3846,7 @@ class GraphModule(torch.nn.Module):
     @parametrize(
         "partial_grad", ["xs", "init", "additional_inputs", "complex", "random"]
     )
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     def test_scan_closure_RNN_partial_autograd(
         self, reverse, compile_mode, partial_grad, device
     ):
@@ -3970,7 +3970,7 @@ class GraphModule(torch.nn.Module):
     @skipIfTorchDynamo("not a dynamo test")
     @unittest.skipIf(TEST_CUDA and not SM70OrLater, "triton")
     @parametrize("layers", [1, 2, 3])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @torch._dynamo.config.patch(capture_scalar_outputs=True)
     def test_scan_multiple_layers_gradient(self, layers, device):
         import torch.nn as nn
@@ -4127,7 +4127,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_closure_combine_fn_with_no_grad_init_carries_unequal_grad(
         self, reverse, compile_mode, device, autograd
@@ -4167,7 +4167,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_closure_combine_fn_with_no_grad_init_carries_equal_grad(
         self, reverse, compile_mode, device, autograd
@@ -4207,7 +4207,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_closure_combine_fn_with_no_grad_for_out(
         self, reverse, compile_mode, device, autograd
@@ -4236,7 +4236,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_closure_combine_fn_with_no_grad_additional_inputs_partial(
         self, reverse, compile_mode, device, autograd
@@ -4271,7 +4271,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_closure_combine_fn_with_no_grad_additional_inputs_all(
         self, reverse, compile_mode, device, autograd
@@ -4308,7 +4308,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_closure_combine_fn_carries_ys_same_grad(
         self, reverse, compile_mode, device, autograd
@@ -4345,7 +4345,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_scan_closure_nested(self, reverse, compile_mode, device, autograd):
         scan_fct = compile_mode_helper(scan, compile_mode)
@@ -4800,7 +4800,7 @@ class AssociativeScanTests(TestCase):
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("combine_mode", ["pointwise", "generic"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
@@ -4883,7 +4883,7 @@ class AssociativeScanTests(TestCase):
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("combine_mode", ["pointwise", "generic"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
@@ -4995,7 +4995,7 @@ class AssociativeScanTests(TestCase):
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
@@ -5037,7 +5037,7 @@ class AssociativeScanTests(TestCase):
     @requires_gpu
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_associative_scan_expand_in_combine_fn(
         self, compile_mode, reverse, device, autograd
@@ -5066,7 +5066,7 @@ class AssociativeScanTests(TestCase):
     @requires_gpu
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_associative_scan_non_contiguous_tensor(
         self, compile_mode, reverse, device, autograd
@@ -5099,7 +5099,7 @@ class AssociativeScanTests(TestCase):
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
@@ -5273,7 +5273,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
@@ -5321,7 +5321,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
@@ -5371,7 +5371,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse_first", [False, True])
     @parametrize("same_direction", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
@@ -5484,7 +5484,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("loop_type", ["for"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_associative_scan_loop_in_combine_fn(
         self, compile_mode, loop_type, reverse, device, autograd
@@ -5570,7 +5570,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of compile_mode=compile_dynamic_shape
     # as the current implementation does not support lifted arguments
@@ -5643,7 +5643,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_associative_scan_vmap_in_combine_fn(
         self, compile_mode, reverse, device, autograd
@@ -5677,7 +5677,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("reverse", [False, True])
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of associative_scan and device=cpu
     # as the current implementation of pointwise does only support CUDA device
@@ -5710,7 +5710,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
@@ -5756,7 +5756,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     def test_associative_scan_different_input_size(self, compile_mode, reverse, device):
         batch = 5
         hidden_dim = 3
@@ -5829,7 +5829,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combine_mode=pointwise
     # as the current implementation of associative_scan lowering
@@ -5882,7 +5882,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combine_mode=pointwise
     # as the current implementation of associative_scan lowering
@@ -5959,7 +5959,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combine_mode=pointwise
     # as the current implementation of associative_scan lowering
@@ -5999,7 +5999,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     def test_associative_scan_freevars_fct_generic(
         self, compile_mode, reverse, device, autograd
@@ -6040,7 +6040,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("autograd", [False, True])
     # Skipping the combine_mode=pointwise
     # as the current implementation of associative_scan lowering
@@ -6078,7 +6078,7 @@ class GraphModule(torch.nn.Module):
     @requires_gpu
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("autograd", [False, True])
     # Skipping the combine_mode=pointwise
@@ -6135,7 +6135,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
     # Skipping the combination of combine_mode=pointwise and compile_mode=compile_dynamic_shape
@@ -6195,7 +6195,7 @@ class GraphModule(torch.nn.Module):
     @parametrize("combine_mode", ["pointwise", "generic"])
     @parametrize("compile_mode", ["none", "eager", "compile", "compile_dynamic_shape"])
     @parametrize("reverse", [False, True])
-    @parametrize("device", ["cpu", "cuda", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     # Skipping the combination of combine_mode=pointwise and device=cpu
     # as the current implementation of pointwise does only support CUDA device
     # Skipping the combination of combine_mode=pointwise and compile_mode=compile_dynamic_shape
@@ -10767,7 +10767,7 @@ class GraphModule(torch.nn.Module):
                     torch.compile(fn)(f, x)
 
     @requires_gpu
-    @parametrize("device", ["cuda", "cpu", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     def test_cond_input_mutation(self, device):
         predicate_true = torch.tensor(True, device=device)
         predicate_false = torch.tensor(False, device=device)
@@ -11234,7 +11234,7 @@ class TestAutoFunctionalizeControlFlow(TestCase):
 
     @requires_gpu
     @unittest.skipIf(TEST_CUDA and not SM70OrLater, "triton")
-    @parametrize("device", ["cuda", "cpu", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("dynamic", [True, False])
     def test_cond_auto_functionalize_input_mutation(self, device, dynamic):
         class M(torch.nn.Module):
@@ -11289,7 +11289,7 @@ class <lambda>(torch.nn.Module):
 
     @requires_gpu
     @unittest.skipIf(TEST_CUDA and not SM70OrLater, "triton")
-    @parametrize("device", ["cuda", "cpu", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("dynamic", [True, False])
     def test_cond_auto_functionalize_buffer_mutation(self, device, dynamic):
         class M(torch.nn.Module):
@@ -11356,7 +11356,7 @@ class <lambda>(torch.nn.Module):
     @skipIfRocm(msg="https://github.com/pytorch/pytorch/issues/181947")
     @requires_gpu
     @unittest.skipIf(TEST_CUDA and not SM70OrLater, "triton")
-    @parametrize("device", ["cuda", "cpu", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("dynamic", [True, False])
     def test_cond_auto_functionalize_union_input_mutation(self, device, dynamic):
         class M(torch.nn.Module):
@@ -11429,7 +11429,7 @@ class <lambda>(torch.nn.Module):
 
     @requires_gpu
     @unittest.skipIf(TEST_CUDA and not SM70OrLater, "triton")
-    @parametrize("device", ["cuda", "cpu", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("dynamic", [True, False])
     def test_while_loop_auto_functionalize_buffer_mutation(self, device, dynamic):
         class M(torch.nn.Module):
@@ -11495,7 +11495,7 @@ class <lambda>(torch.nn.Module):
 
     @requires_gpu
     @unittest.skipIf(TEST_CUDA and not SM70OrLater, "triton")
-    @parametrize("device", ["cuda", "cpu", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("dynamic", [True, False])
     def test_while_loop_auto_functionalize_multiple_buffer_mutation(
         self, device, dynamic
@@ -11555,7 +11555,7 @@ class <lambda>(torch.nn.Module):
 
     @requires_gpu
     @unittest.skipIf(TEST_CUDA and not SM70OrLater, "triton")
-    @parametrize("device", ["cuda", "cpu", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("dynamic", [True, False])
     def test_while_loop_auto_functionalize_buffer_in_cond(self, device, dynamic):
         class M(torch.nn.Module):
@@ -11606,7 +11606,7 @@ class <lambda>(torch.nn.Module):
 
     @requires_gpu
     @unittest.skipIf(TEST_CUDA and not SM70OrLater, "triton")
-    @parametrize("device", ["cuda", "cpu", "xpu"])
+    @parametrize("device", ["cpu", device_type])
     @parametrize("dynamic", [True, False])
     def test_while_loop_auto_functionalize_captured_tensor_mutation(
         self, device, dynamic
