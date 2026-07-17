@@ -12614,7 +12614,7 @@ instantiate_device_type_tests(TestControlFlowTracedDevice, globals(), allow_xpu=
 instantiate_parametrized_tests(TestControlFlowTracedCUDA)
 instantiate_parametrized_tests(TestAutoFunctionalizeControlFlow)
 instantiate_device_type_tests(
-    TestAutoFunctionalizeControlFlow, globals(), allow_xpu=True
+    TestAutoFunctionalizeControlFlowDevice, globals(), allow_xpu=True
 )
 
 instantiate_parametrized_tests(TestControlFlow)
