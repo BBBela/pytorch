@@ -5785,9 +5785,7 @@ class AssociativeScanTestsDevice(TestCase):
         dstate = 7
 
         deltaA = torch.randn((batch, hidden_dim, length, dstate), device=device)
-        deltaB_u = torch.randn(
-            (batch, hidden_dim, length, dstate), device=device
-        )
+        deltaB_u = torch.randn((batch, hidden_dim, length, dstate), device=device)
         C = torch.randn((batch, dstate, length), device=device)
         x = torch.randn((batch, hidden_dim, length, dstate), device=device)
         y = torch.randn((batch, hidden_dim, length, dstate), device=device)
@@ -12615,7 +12613,9 @@ instantiate_parametrized_tests(TestControlFlowTraced)
 instantiate_device_type_tests(TestControlFlowTracedDevice, globals(), allow_xpu=True)
 instantiate_parametrized_tests(TestControlFlowTracedCUDA)
 instantiate_parametrized_tests(TestAutoFunctionalizeControlFlow)
-instantiate_device_type_tests(TestAutoFunctionalizeControlFlow, globals(), allow_xpu=True)
+instantiate_device_type_tests(
+    TestAutoFunctionalizeControlFlow, globals(), allow_xpu=True
+)
 
 instantiate_parametrized_tests(TestControlFlow)
 instantiate_device_type_tests(TestControlFlowDevice, globals(), allow_xpu=True)
