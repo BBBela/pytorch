@@ -33,6 +33,7 @@ from torch._subclasses.functional_tensor import (
 )
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.testing._internal.common_cuda import SM70OrLater
+from torch.testing._internal.common_device_type import instantiate_device_type_tests
 from torch.testing._internal.common_quantization import skipIfNoDynamoSupport
 from torch.testing._internal.common_utils import (
     decorateIf,
@@ -11004,8 +11005,14 @@ class GraphModule(torch.nn.Module):
         compiled = torch.compile(g, backend=backend, dynamic=True, fullgraph=True)
         self.assertEqual(compiled(5, 7), g(5, 7))
 
-    @requires_cuda
-    @parametrize("device", ["cuda", "cpu"])
+
+@unittest.skipIf(IS_WINDOWS, "Windows not supported for this test")
+@skipIfNoDynamoSupport
+class TestControlFlowTracedDevice(TestCase):
+    def setUp(self):
+        torch._dynamo.reset()
+        super().setUp()
+
     def test_cond_input_mutation(self, device):
         predicate_true = torch.tensor(True, device=device)
         predicate_false = torch.tensor(False, device=device)
@@ -11027,10 +11034,18 @@ class GraphModule(torch.nn.Module):
             output = torch.compile(fn)(predicate_true, data)
             self.assertEqual(output, org_data + 1)
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
+
+@unittest.skipIf(
+    not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
+    "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
+)
+@unittest.skipIf(IS_WINDOWS, "Windows not supported for this test")
+@skipIfNoDynamoSupport
+class TestControlFlowTracedCUDA(TestCase):
+    def setUp(self):
+        torch._dynamo.reset()
+        super().setUp()
+
     def test_cond_traced_not_nested_cudagraphs(self):
         def true_fn(x):
             return x.sin()
@@ -11058,10 +11073,6 @@ class GraphModule(torch.nn.Module):
             [x, false_pred],
         )
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
     def test_cond_pin_memory_cudagraphs(self):
         # Make sure that pinned host memory allocations get assigned
         # to a private pool correctly during stream capture, even
@@ -11099,10 +11110,6 @@ class GraphModule(torch.nn.Module):
             [x, false_pred],
         )
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
     def test_cond_traced_triply_nested_cudagraphs(self):
         def level3_true(x):
             return x.sin()
@@ -11146,10 +11153,6 @@ class GraphModule(torch.nn.Module):
             _check_compile_cudagraph_backend(self, f, args)
             _check_compile_many_backends_with_cudagraph(self, f, args)
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
     def test_while_loop_traced_cudagraphs(self):
         def f(x, limit):
             init_iter = torch.zeros((), dtype=torch.int64, device=x.device)
@@ -11168,10 +11171,6 @@ class GraphModule(torch.nn.Module):
         _check_compile_cudagraph_backend(self, f, [x, limit])
         _check_compile_many_backends_with_cudagraph(self, f, [x, limit])
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
     def test_while_loop_cuda_graph_replay_uses_runtime_condition(self):
         def cond_fn(acc, iteration, limit):
             return iteration < limit
@@ -11215,10 +11214,6 @@ class GraphModule(torch.nn.Module):
             self.assertEqual(x, torch.ones_like(x))
             self.assertEqual(iteration, torch.zeros_like(iteration))
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
     def test_while_loop_cudagraph_kwargs_error(self):
         def cond_fn(iteration):
             return iteration < 1
@@ -11245,10 +11240,6 @@ class GraphModule(torch.nn.Module):
                     {"unexpected": True},
                 )
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
     def test_while_loop_cudagraph_body_pytree_mismatch_error(self):
         def cond_fn(iteration):
             return iteration < 1
@@ -11269,10 +11260,6 @@ class GraphModule(torch.nn.Module):
             ):
                 torch.ops.higher_order.while_loop(cond_fn, body_fn, (iteration,), ())
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
     def test_cond_inside_while_loop_cudagraphs(self):
         def f(x, limit):
             init_iter = torch.zeros((), dtype=torch.int64, device=x.device)
@@ -11298,10 +11285,6 @@ class GraphModule(torch.nn.Module):
         _check_compile_cudagraph_backend(self, f, [x, limit])
         _check_compile_many_backends_with_cudagraph(self, f, [x, limit])
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
     def test_while_loop_inside_cond_cudagraphs(self):
         def add_loop(x, limit):
             init_iter = torch.zeros((), dtype=torch.int64, device=x.device)
@@ -11337,10 +11320,6 @@ class GraphModule(torch.nn.Module):
             _check_compile_cudagraph_backend(self, f, [x, pred, limit])
             _check_compile_many_backends_with_cudagraph(self, f, [x, pred, limit])
 
-    @unittest.skipIf(
-        not TEST_CUDA_GRAPH_CONDITIONAL_NODES,
-        "CUDA 12.4 or greater is required for CUDA Graphs with conditional nodes",
-    )
     def test_cond_traced_record_stream_reuse(self):
         torch.cuda.memory._set_allocator_settings(
             "graph_capture_record_stream_reuse:True"
@@ -13028,6 +13007,8 @@ class TestControlFlowAndRNG(TestCase):
 
 instantiate_parametrized_tests(TestHopSchema)
 instantiate_parametrized_tests(TestControlFlowTraced)
+instantiate_device_type_tests(TestControlFlowTracedDevice, globals())
+instantiate_parametrized_tests(TestControlFlowTracedCUDA)
 instantiate_parametrized_tests(TestAutoFunctionalizeControlFlow)
 
 instantiate_parametrized_tests(TestControlFlow)
