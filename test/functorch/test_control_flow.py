@@ -2656,179 +2656,6 @@ class <lambda>(torch.nn.Module):
         ):
             scan_fct(no_carry, init, x, dim=dim)
 
-    @requires_cuda
-    @parametrize("reverse", [False, True])
-    @parametrize("device", [torch.device("cpu"), torch.device("cuda")])
-    def test_scan_init_wrong_pytree_complex(self, reverse, device):
-        x = torch.randn(3, 2, 2, device=device)
-        y = torch.randn(3, 2, 2, device=device)
-        z = torch.randn(3, 2, 2, device=device)
-
-        # Wrong pytree fed to the function
-        init = {
-            "i": torch._ops.ops.aten.slice(x, 0, 0, 1, 1),
-            "j": (
-                {"a": torch._ops.ops.aten.slice(x, 0, 0, 1, 1)},
-                [torch._ops.ops.aten.slice(y, 0, 0, 1, 1)],
-                [{"o": torch._ops.ops.aten.slice(z, 0, 0, 1, 1)}],
-            ),
-        }
-        inp = {
-            "i": torch._ops.ops.aten.slice(x, 0, 0, None, 1),
-            "j": (
-                [torch._ops.ops.aten.slice(y, 0, 0, None, 1)],
-                [{"o": torch._ops.ops.aten.slice(z, 0, 0, None, 1)}],
-            ),
-        }
-        with self.assertRaisesRegex(
-            Exception,
-            ".*",
-        ):
-            scan(
-                get_scan_combine_fn("complex_pointwise", False),
-                init,
-                inp,
-                dim=0,
-                reverse=reverse,
-            )
-
-    @unittest.skipIf(not SM70OrLater, "triton")
-    @requires_cuda
-    @parametrize("reverse", [False, True])
-    @parametrize("compile_mode", ["none", "eager"])
-    @parametrize("device", [torch.device("cpu"), torch.device("cuda")])
-    @parametrize("autograd", [False, True])
-    def test_scan_init_pytree_complex(self, reverse, compile_mode, device, autograd):
-        def fct_pointwise_different_output(x, y):
-            return (
-                {
-                    "i": x["i"] * y["i"],
-                    "j": (
-                        [x["j"][0][0] * y["j"][0][0]],
-                        [{"o": x["j"][1][0]["o"] + y["j"][1][0]["o"]}],
-                    ),
-                },
-                (
-                    y["i"] * 2,
-                    {
-                        "o": x["i"] * y["i"],
-                        "j": (
-                            [x["j"][0][0] * y["j"][0][0]],
-                            [{"o": x["j"][1][0]["o"] + y["j"][1][0]["o"]}],
-                        ),
-                    },
-                ),
-            )
-
-        def fct_pointwise_different_carry(x, y):
-            return (
-                {
-                    "i": x["i"] * y["i"],
-                    "j": (
-                        x["i"] * 2,
-                        [x["j"][1][0] * y["j"][0][0]],
-                        [{"o": x["j"][2][0]["o"] + y["j"][1][0]["o"]}],
-                    ),
-                },
-                (
-                    y["i"] * 2,
-                    {
-                        "o": x["i"] * y["i"] + x["j"][0][0],
-                        "j": (
-                            [x["j"][1][0] * y["j"][0][0]],
-                            [{"o": x["j"][2][0]["o"] + y["j"][1][0]["o"]}],
-                        ),
-                    },
-                ),
-            )
-
-        scan_fct = compile_mode_helper(scan, compile_mode)
-
-        x = torch.randn(3, 2, 2, device=device, requires_grad=autograd)
-        y = torch.randn(3, 2, 2, device=device, requires_grad=autograd)
-        z = torch.randn(3, 2, 2, device=device, requires_grad=autograd)
-
-        if reverse:
-            init_start, init_end = -1, None
-            inp_start, inp_end = 0, -1
-        else:
-            init_start, init_end = 0, 1
-            inp_start, inp_end = 1, None
-
-        # Regular case
-        init = {
-            "i": torch._ops.ops.aten.slice(x, 0, init_start, init_end, 1),
-            "j": (
-                [torch._ops.ops.aten.slice(y, 0, init_start, init_end, 1)],
-                [{"o": torch._ops.ops.aten.slice(z, 0, init_start, init_end, 1)}],
-            ),
-        }
-        inp = {
-            "i": torch._ops.ops.aten.slice(x, 0, inp_start, inp_end, 1),
-            "j": (
-                [torch._ops.ops.aten.slice(y, 0, inp_start, inp_end, 1)],
-                [{"o": torch._ops.ops.aten.slice(z, 0, inp_start, inp_end, 1)}],
-            ),
-        }
-        result = scan_fct(
-            get_scan_combine_fn("complex_pointwise", False),
-            init,
-            inp,
-            dim=0,
-            reverse=reverse,
-        )
-        expected_result = _fake_scan(
-            get_scan_combine_fn("complex_pointwise", False),
-            init,
-            inp,
-            dim=0,
-            reverse=reverse,
-        )
-        self.assertEqual(result, expected_result)
-
-        if autograd:
-            init_flat = pytree.tree_leaves(init)
-            inp_flat = pytree.tree_leaves(inp)
-            self.check_autograd(result, expected_result, (*init_flat, *inp_flat))
-
-        # Pytree of output is different
-        result = scan_fct(
-            fct_pointwise_different_output, init, inp, dim=0, reverse=reverse
-        )
-        expected_result = _fake_scan(
-            fct_pointwise_different_output, init=init, xs=inp, dim=0, reverse=reverse
-        )
-        self.assertEqual(result, expected_result)
-
-        # Pytree of carry is different
-        init = {
-            "i": torch._ops.ops.aten.slice(x, 0, init_start, init_end, 1),
-            "j": (
-                torch._ops.ops.aten.slice(x, 0, init_start, init_end, 1),
-                [torch._ops.ops.aten.slice(y, 0, init_start, init_end, 1)],
-                [{"o": torch._ops.ops.aten.slice(z, 0, init_start, init_end, 1)}],
-            ),
-        }
-        inp = {
-            "i": torch._ops.ops.aten.slice(x, 0, inp_start, inp_end, 1),
-            "j": (
-                [torch._ops.ops.aten.slice(y, 0, inp_start, inp_end, 1)],
-                [{"o": torch._ops.ops.aten.slice(z, 0, inp_start, inp_end, 1)}],
-            ),
-        }
-        result = scan_fct(
-            fct_pointwise_different_carry, init, inp, dim=0, reverse=reverse
-        )
-        expected_result = _fake_scan(
-            fct_pointwise_different_carry, init=init, xs=inp, dim=0, reverse=reverse
-        )
-        self.assertEqual(result, expected_result)
-
-        if autograd:
-            init_flat = pytree.tree_leaves(init)
-            inp_flat = pytree.tree_leaves(inp)
-            self.check_autograd(result, expected_result, (*init_flat, *inp_flat))
-
     @skipIfTorchDynamo("don't test compile on compile")
     @skipIfNoDynamoSupport
     @skipIfCrossRef  # Arg order changes with crossref
@@ -2950,95 +2777,6 @@ class GraphModule(torch.nn.Module):
             grads = grads[:2]
             self.assertEqual(grads, expected_grads)
             self.assertEqual(add_input_grads, expected_add_input_grads)
-
-    @unittest.skipIf(not SM70OrLater, "triton")
-    @requires_cuda
-    @parametrize("reverse", [False, True])
-    @parametrize("compile_mode", ["none", "eager"])
-    @parametrize(
-        "partial_grad", ["xs", "init", "additional_inputs", "complex", "random"]
-    )
-    @parametrize("device", [torch.device("cpu"), torch.device("cuda")])
-    def test_scan_closure_RNN_partial_autograd(
-        self, reverse, compile_mode, partial_grad, device
-    ):
-        dim = 1
-        scan_fct = compile_mode_helper(scan, compile_mode)
-
-        # The first two booleans are the xs
-        # The second two are the inits
-        # The last four are the additional_inputs
-        autograds = []
-
-        if partial_grad == "xs":
-            # xs tests
-            autograds.append([True, False, True, True, True, True, True, True])
-            autograds.append([False, False, True, True, True, True, True, True])
-            autograds.append([True, False, False, False, False, False, False, False])
-        elif partial_grad == "init":
-            # init tests
-            autograds.append([True, True, False, True, True, True, True, True])
-            autograds.append([True, True, False, False, True, True, True, True])
-            autograds.append([False, False, False, True, False, False, False, False])
-        elif partial_grad == "additional_inputs":
-            # additional input tests
-            autograds.append([True, True, True, True, False, True, False, True])
-            autograds.append([True, True, True, True, False, False, True, False])
-            autograds.append([False, False, False, False, False, True, False, True])
-            autograds.append([False, False, False, False, False, False, True, False])
-        elif partial_grad == "complex":
-            # complex cases
-            autograds.append([True, False, False, False, False, False, False, True])
-            autograds.append([False, False, True, True, False, False, False, True])
-        elif partial_grad == "random":
-            # random tests
-            import random
-
-            for _ in range(5):
-                autograds.append([bool(random.randint(0, 1)) for _ in range(8)])
-
-        for autograd in autograds:
-            x = torch.randn(3, 10, 5, device=device, requires_grad=autograd[0])
-            x1 = torch.randn(3, 10, 5, device=device, requires_grad=autograd[1])
-            h = torch.randn(3, 7, device=device, requires_grad=autograd[2])
-            h_1 = torch.randn(3, 7, device=device, requires_grad=autograd[3])
-            W_ih = torch.randn(5, 7, device=device, requires_grad=autograd[4])
-            b_ih = torch.randn(7, device=device, requires_grad=autograd[5])
-            W_hh = torch.randn(7, 7, device=device, requires_grad=autograd[6])
-            b_hh = torch.randn(7, device=device, requires_grad=autograd[7])
-
-            params = [
-                p
-                for p, a in zip([x, x1, h, h_1, W_ih, b_ih, W_hh, b_hh], autograd)
-                if a
-            ]
-
-            def RNN(x: torch.Tensor, y: torch.Tensor):
-                c_new_0 = x[0] + b_hh
-                c_new_1 = x[1] + 1
-                h_new = (
-                    torch.tanh(c_new_1 + x[0] @ W_hh + b_hh)
-                    + y[0] @ W_ih
-                    + y[1] @ W_ih
-                    + b_ih
-                    + x[1]
-                )
-                return (c_new_0, c_new_1), h_new
-
-            inits = (h, h_1)
-            result = scan_fct(RNN, inits, (x, x1), dim=dim, reverse=reverse)
-            result_exp = _fake_scan(RNN, (h, h_1), (x, x1), dim=dim, reverse=reverse)
-            self.assertEqual(result, result_exp)
-
-            if autograd:
-                result_flat = pytree.tree_leaves(result)
-                result_exp_flat = pytree.tree_leaves(result_exp)
-                exp_grad_mask = [bool(r.requires_grad) for r in result_exp_flat]
-                self.check_autograd(
-                    [r for r, m in zip(result_flat, exp_grad_mask) if m],
-                    [r for r, m in zip(result_exp_flat, exp_grad_mask) if m],
-                    params,
-                )
 
     def test_scan_break_bw_input_output_aliasing(self):
         # Focused test for ScanAutogradImpl._break_bw_input_output_aliasing.
@@ -4611,6 +4349,268 @@ def forward(self, L_init_ : torch.Tensor, L_xs_ : torch.Tensor):
 
         if autograd:
             self.check_autograd(result, result_exp, (init, x))
+
+    @requires_cuda
+    @parametrize("reverse", [False, True])
+    @parametrize("device", [torch.device("cpu"), torch.device("cuda")])
+    def test_scan_init_wrong_pytree_complex(self, reverse, device):
+        x = torch.randn(3, 2, 2, device=device)
+        y = torch.randn(3, 2, 2, device=device)
+        z = torch.randn(3, 2, 2, device=device)
+
+        # Wrong pytree fed to the function
+        init = {
+            "i": torch._ops.ops.aten.slice(x, 0, 0, 1, 1),
+            "j": (
+                {"a": torch._ops.ops.aten.slice(x, 0, 0, 1, 1)},
+                [torch._ops.ops.aten.slice(y, 0, 0, 1, 1)],
+                [{"o": torch._ops.ops.aten.slice(z, 0, 0, 1, 1)}],
+            ),
+        }
+        inp = {
+            "i": torch._ops.ops.aten.slice(x, 0, 0, None, 1),
+            "j": (
+                [torch._ops.ops.aten.slice(y, 0, 0, None, 1)],
+                [{"o": torch._ops.ops.aten.slice(z, 0, 0, None, 1)}],
+            ),
+        }
+        with self.assertRaisesRegex(
+            Exception,
+            ".*",
+        ):
+            scan(
+                get_scan_combine_fn("complex_pointwise", False),
+                init,
+                inp,
+                dim=0,
+                reverse=reverse,
+            )
+
+    @unittest.skipIf(not SM70OrLater, "triton")
+    @requires_cuda
+    @parametrize("reverse", [False, True])
+    @parametrize("compile_mode", ["none", "eager"])
+    @parametrize("device", [torch.device("cpu"), torch.device("cuda")])
+    @parametrize("autograd", [False, True])
+    def test_scan_init_pytree_complex(self, reverse, compile_mode, device, autograd):
+        def fct_pointwise_different_output(x, y):
+            return (
+                {
+                    "i": x["i"] * y["i"],
+                    "j": (
+                        [x["j"][0][0] * y["j"][0][0]],
+                        [{"o": x["j"][1][0]["o"] + y["j"][1][0]["o"]}],
+                    ),
+                },
+                (
+                    y["i"] * 2,
+                    {
+                        "o": x["i"] * y["i"],
+                        "j": (
+                            [x["j"][0][0] * y["j"][0][0]],
+                            [{"o": x["j"][1][0]["o"] + y["j"][1][0]["o"]}],
+                        ),
+                    },
+                ),
+            )
+
+        def fct_pointwise_different_carry(x, y):
+            return (
+                {
+                    "i": x["i"] * y["i"],
+                    "j": (
+                        x["i"] * 2,
+                        [x["j"][1][0] * y["j"][0][0]],
+                        [{"o": x["j"][2][0]["o"] + y["j"][1][0]["o"]}],
+                    ),
+                },
+                (
+                    y["i"] * 2,
+                    {
+                        "o": x["i"] * y["i"] + x["j"][0][0],
+                        "j": (
+                            [x["j"][1][0] * y["j"][0][0]],
+                            [{"o": x["j"][2][0]["o"] + y["j"][1][0]["o"]}],
+                        ),
+                    },
+                ),
+            )
+
+        scan_fct = compile_mode_helper(scan, compile_mode)
+
+        x = torch.randn(3, 2, 2, device=device, requires_grad=autograd)
+        y = torch.randn(3, 2, 2, device=device, requires_grad=autograd)
+        z = torch.randn(3, 2, 2, device=device, requires_grad=autograd)
+
+        if reverse:
+            init_start, init_end = -1, None
+            inp_start, inp_end = 0, -1
+        else:
+            init_start, init_end = 0, 1
+            inp_start, inp_end = 1, None
+
+        # Regular case
+        init = {
+            "i": torch._ops.ops.aten.slice(x, 0, init_start, init_end, 1),
+            "j": (
+                [torch._ops.ops.aten.slice(y, 0, init_start, init_end, 1)],
+                [{"o": torch._ops.ops.aten.slice(z, 0, init_start, init_end, 1)}],
+            ),
+        }
+        inp = {
+            "i": torch._ops.ops.aten.slice(x, 0, inp_start, inp_end, 1),
+            "j": (
+                [torch._ops.ops.aten.slice(y, 0, inp_start, inp_end, 1)],
+                [{"o": torch._ops.ops.aten.slice(z, 0, inp_start, inp_end, 1)}],
+            ),
+        }
+        result = scan_fct(
+            get_scan_combine_fn("complex_pointwise", False),
+            init,
+            inp,
+            dim=0,
+            reverse=reverse,
+        )
+        expected_result = _fake_scan(
+            get_scan_combine_fn("complex_pointwise", False),
+            init,
+            inp,
+            dim=0,
+            reverse=reverse,
+        )
+        self.assertEqual(result, expected_result)
+
+        if autograd:
+            init_flat = pytree.tree_leaves(init)
+            inp_flat = pytree.tree_leaves(inp)
+            self.check_autograd(result, expected_result, (*init_flat, *inp_flat))
+
+        # Pytree of output is different
+        result = scan_fct(
+            fct_pointwise_different_output, init, inp, dim=0, reverse=reverse
+        )
+        expected_result = _fake_scan(
+            fct_pointwise_different_output, init=init, xs=inp, dim=0, reverse=reverse
+        )
+        self.assertEqual(result, expected_result)
+
+        # Pytree of carry is different
+        init = {
+            "i": torch._ops.ops.aten.slice(x, 0, init_start, init_end, 1),
+            "j": (
+                torch._ops.ops.aten.slice(x, 0, init_start, init_end, 1),
+                [torch._ops.ops.aten.slice(y, 0, init_start, init_end, 1)],
+                [{"o": torch._ops.ops.aten.slice(z, 0, init_start, init_end, 1)}],
+            ),
+        }
+        inp = {
+            "i": torch._ops.ops.aten.slice(x, 0, inp_start, inp_end, 1),
+            "j": (
+                [torch._ops.ops.aten.slice(y, 0, inp_start, inp_end, 1)],
+                [{"o": torch._ops.ops.aten.slice(z, 0, inp_start, inp_end, 1)}],
+            ),
+        }
+        result = scan_fct(
+            fct_pointwise_different_carry, init, inp, dim=0, reverse=reverse
+        )
+        expected_result = _fake_scan(
+            fct_pointwise_different_carry, init=init, xs=inp, dim=0, reverse=reverse
+        )
+        self.assertEqual(result, expected_result)
+
+        if autograd:
+            init_flat = pytree.tree_leaves(init)
+            inp_flat = pytree.tree_leaves(inp)
+            self.check_autograd(result, expected_result, (*init_flat, *inp_flat))
+
+    @unittest.skipIf(not SM70OrLater, "triton")
+    @requires_cuda
+    @parametrize("reverse", [False, True])
+    @parametrize("compile_mode", ["none", "eager"])
+    @parametrize(
+        "partial_grad", ["xs", "init", "additional_inputs", "complex", "random"]
+    )
+    @parametrize("device", [torch.device("cpu"), torch.device("cuda")])
+    def test_scan_closure_RNN_partial_autograd(
+        self, reverse, compile_mode, partial_grad, device
+    ):
+        dim = 1
+        scan_fct = compile_mode_helper(scan, compile_mode)
+
+        # The first two booleans are the xs
+        # The second two are the inits
+        # The last four are the additional_inputs
+        autograds = []
+
+        if partial_grad == "xs":
+            # xs tests
+            autograds.append([True, False, True, True, True, True, True, True])
+            autograds.append([False, False, True, True, True, True, True, True])
+            autograds.append([True, False, False, False, False, False, False, False])
+        elif partial_grad == "init":
+            # init tests
+            autograds.append([True, True, False, True, True, True, True, True])
+            autograds.append([True, True, False, False, True, True, True, True])
+            autograds.append([False, False, False, True, False, False, False, False])
+        elif partial_grad == "additional_inputs":
+            # additional input tests
+            autograds.append([True, True, True, True, False, True, False, True])
+            autograds.append([True, True, True, True, False, False, True, False])
+            autograds.append([False, False, False, False, False, True, False, True])
+            autograds.append([False, False, False, False, False, False, True, False])
+        elif partial_grad == "complex":
+            # complex cases
+            autograds.append([True, False, False, False, False, False, False, True])
+            autograds.append([False, False, True, True, False, False, False, True])
+        elif partial_grad == "random":
+            # random tests
+            import random
+
+            for _ in range(5):
+                autograds.append([bool(random.randint(0, 1)) for _ in range(8)])
+
+        for autograd in autograds:
+            x = torch.randn(3, 10, 5, device=device, requires_grad=autograd[0])
+            x1 = torch.randn(3, 10, 5, device=device, requires_grad=autograd[1])
+            h = torch.randn(3, 7, device=device, requires_grad=autograd[2])
+            h_1 = torch.randn(3, 7, device=device, requires_grad=autograd[3])
+            W_ih = torch.randn(5, 7, device=device, requires_grad=autograd[4])
+            b_ih = torch.randn(7, device=device, requires_grad=autograd[5])
+            W_hh = torch.randn(7, 7, device=device, requires_grad=autograd[6])
+            b_hh = torch.randn(7, device=device, requires_grad=autograd[7])
+
+            params = [
+                p
+                for p, a in zip([x, x1, h, h_1, W_ih, b_ih, W_hh, b_hh], autograd)
+                if a
+            ]
+
+            def RNN(x: torch.Tensor, y: torch.Tensor):
+                c_new_0 = x[0] + b_hh
+                c_new_1 = x[1] + 1
+                h_new = (
+                    torch.tanh(c_new_1 + x[0] @ W_hh + b_hh)
+                    + y[0] @ W_ih
+                    + y[1] @ W_ih
+                    + b_ih
+                    + x[1]
+                )
+                return (c_new_0, c_new_1), h_new
+
+            inits = (h, h_1)
+            result = scan_fct(RNN, inits, (x, x1), dim=dim, reverse=reverse)
+            result_exp = _fake_scan(RNN, (h, h_1), (x, x1), dim=dim, reverse=reverse)
+            self.assertEqual(result, result_exp)
+
+            if autograd:
+                result_flat = pytree.tree_leaves(result)
+                result_exp_flat = pytree.tree_leaves(result_exp)
+                exp_grad_mask = [bool(r.requires_grad) for r in result_exp_flat]
+                self.check_autograd(
+                    [r for r, m in zip(result_flat, exp_grad_mask) if m],
+                    [r for r, m in zip(result_exp_flat, exp_grad_mask) if m],
+                    params,
+                )
 
     @requires_cuda
     def test_scan_input_mutation(self):
