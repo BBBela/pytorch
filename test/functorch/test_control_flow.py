@@ -13305,7 +13305,9 @@ instantiate_parametrized_tests(TestControlFlowTraced)
 instantiate_parametrized_tests(TestAutoFunctionalizeControlFlow)
 
 instantiate_parametrized_tests(TestControlFlow)
-instantiate_device_type_tests(TestControlFlowDevice, globals(), only_for=("cpu", "cuda"))
+instantiate_device_type_tests(
+    TestControlFlowDevice, globals(), only_for=("cpu", "cuda")
+)
 instantiate_parametrized_tests(AssociativeScanTests)
 
 instantiate_parametrized_tests(TestControlFlowAndRNG)
