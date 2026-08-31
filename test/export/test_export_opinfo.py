@@ -3,6 +3,7 @@
 # flake8: noqa
 
 import itertools
+import os
 import subprocess
 import sys
 import unittest
@@ -59,7 +60,7 @@ fake_export_failures = {
 }
 
 # These pass with CUDA enabled but still fail fake CUDA export on CPU-only builds.
-if not torch.backends.cuda.is_built():
+if not torch.backends.cuda.is_built() and not torch.xpu._is_compiled():
     fake_export_failures.add(xfail("geqrf"))
     fake_export_failures.add(xfail("sparse.sampled_addmm"))
     fake_export_failures.add(xfail("to_sparse"))
@@ -128,7 +129,7 @@ class TestExportOpInfoCPU(TestCase):
     @ops(op_db, allowed_dtypes=(torch.float,))
     @skipOps(export_failures | fake_export_failures)
     @unittest.skipIf(IS_FBCODE, "tests broken with unexpected successes internally")
-    @parametrize("target_device", ["cuda:0"])
+    @parametrize("target_device", ["cuda:0", "xpu:0"])
     def test_fake_export(self, target_device, dtype, op):
         _test_export_helper(self, target_device, dtype, op)
 
@@ -153,7 +154,9 @@ def _get_env_by_device(device):
     device_type = torch.device(device).type
     if device_type == "cuda":
         env = {"CUDA_VISIBLE_DEVICES": ""}
-    # elif other device
+    elif device_type == "xpu":
+        env = os.environ.copy()
+        env["ONEAPI_DEVICE_SELECTOR"] = "*:cpu"
     return env
 
 
@@ -302,7 +305,9 @@ accelerator_calls_behavior_unchanged()
         self.assertEqual(r, "")
 
 
-instantiate_device_type_tests(TestExportOnFakeDevice, globals(), only_for=("cuda",))
+instantiate_device_type_tests(
+    TestExportOnFakeDevice, globals(), only_for=("cuda", "xpu"), allow_xpu=True
+)
 
 
 if __name__ == "__main__":
