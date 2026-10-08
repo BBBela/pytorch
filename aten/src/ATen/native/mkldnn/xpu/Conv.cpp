@@ -327,6 +327,13 @@ Tensor _convolution_out(
   weight = make_contiguous_and_aligned(weight, mfmt);
   check_shape_forward(input, weight, bias, params);
 
+  // oneDNN now describes dst by its real strides, so a caller-supplied out=
+  // buffer whose strides are not a valid plain descriptor has to go through a
+  // temporary; the copy-back at the end of this function writes it out.
+  Tensor output_dst = output_r.defined() && !onednn_strides_check(output_r)
+      ? output_r.contiguous()
+      : output_r;
+
   Tensor output;
   if (transposed_) {
     // create output and propagate memory format
@@ -341,7 +348,7 @@ Tensor _convolution_out(
           params.groups);
       output = at::empty(dst_tz, input.options(), mfmt);
     } else {
-      output = output_r;
+      output = output_dst;
     }
 
     onednn::deconvolution(
@@ -385,7 +392,7 @@ Tensor _convolution_out(
           params.dilation);
       output = at::empty(dst_tz, input.options(), mfmt);
     } else {
-      output = output_r;
+      output = output_dst;
     }
     onednn::convolution(
         output,
